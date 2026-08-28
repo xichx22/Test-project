@@ -76,17 +76,22 @@ def validate(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def repair(df: pd.DataFrame, *, tolerance: float = 0.001) -> tuple[pd.DataFrame, pd.DataFrame]:
+def repair(df: pd.DataFrame, *, tolerance: float = 0.005) -> tuple[pd.DataFrame, pd.DataFrame]:
     """수정주가 반올림으로 생긴 미세한 정합성 위반을 보정한다.
 
     국내 시세 제공자는 액면분할·무상증자 등을 소급 반영한 수정주가를 주는데,
     개별 가격을 따로 반올림하는 탓에 `종가 = 고가 + 1원` 같은 행이 나온다.
     (예: 삼성SDI 2022-11-01 고가 744,064 / 종가 744,065)
 
-    실제 관측 오차가 아니라 계산 아티팩트이므로, 오차가 tolerance(기본 0.1%)
+    실제 관측 오차가 아니라 계산 아티팩트이므로, 오차가 tolerance(기본 0.5%)
     이내면 고가/저가를 시가·종가를 포함하도록 넓혀 보정한다.
     그보다 큰 위반은 손대지 않는다 — 그건 진짜 잘못된 데이터이고,
     validate() 가 잡아야 한다.
+
+    허용치가 0.5% 인 이유: 기간이 길수록(10년) 오래된 저가 구간의 반올림 오차
+    비율이 커진다. 실측에서 대한전선 0.28%, 에코프로 0.12% 까지 나왔다.
+    반면 진짜 깨진 데이터(시가/고가/저가가 0 인 거래정지 행)는 오차가 100% 라
+    이 문턱으로 충분히 갈린다.
 
     반환 (보정된 df, 보정 내역)
     """

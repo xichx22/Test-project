@@ -29,8 +29,16 @@ MARKETS = {"KOSPI": 0, "KOSDAQ": 1}
 
 _ROW = re.compile(r'<a href="/item/main\.naver\?code=(\d{6})"[^>]*class="tltle"[^>]*>([^<]+)</a>')
 
-# 우선주·스팩·리츠는 보통주와 성격이 달라 기술적 신호 검증 대상에서 뺀다.
-_EXCLUDE_NAME = re.compile(r"스팩|리츠|우B$|우C$")
+# 우선주·스팩·리츠·ETF/ETN 은 보통주와 성격이 달라 기술적 신호 검증에서 뺀다.
+# ETF 는 시가총액 상위 목록에 그대로 섞여 들어온다 (KODEX 200, TIGER 미국S&P500 …).
+# 기업의 차트 패턴을 검증하는데 지수 추종 상품이 끼면 표본이 오염된다.
+_ETF_BRANDS = (
+    "KODEX|TIGER|KBSTAR|ARIRANG|HANARO|KOSEF|ACE |SOL |RISE |PLUS |TIMEFOLIO|"
+    "KIWOOM|WOORI|마이다스|파워|FOCUS|BNK|히어로즈|TREX|VITA|UNICORN"
+)
+_EXCLUDE_NAME = re.compile(
+    rf"스팩|리츠|우B$|우C$|{_ETF_BRANDS}|레버리지|인버스|선물|채권|금리|합성", re.IGNORECASE
+)
 
 
 class UniverseError(RuntimeError):
