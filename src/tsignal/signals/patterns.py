@@ -196,6 +196,328 @@ def cup_with_handle(
     return frame.set_index("dt") if not frame.empty else frame
 
 
+# =====================================================================
+# 공통 헬퍼 — 패턴들이 함께 쓰는 조건
+# =====================================================================
+
+def _prior_uptrend(close: np.ndarray, start: int, window: int, gain: float) -> bool:
+    """베이스 시작 전에 상승이 있었는가.
+
+    컵앤핸들 실측에서 이 조건을 빼자 연환산 초과수익이 +15.9% → +0.6% 로
+    사라졌다. 베이스 패턴은 전부 '오르던 종목의 조정'이라는 전제 위에 있으므로
+    모든 패턴에 같은 조건을 건다.
+    """
+    prior_idx = start - window
+    if prior_idx < 0 or close[prior_idx] <= 0:
+        return False
+    return close[start] / close[prior_idx] - 1 >= gain
+
+
+def _breakout(close: np.ndarray, volume: np.ndarray, avg_volume: np.ndarray,
+              t: int, pivot: float, volume_mult: float) -> bool:
+    """직전까지 pivot 아래였다가 이번 봉에 위로, 거래량이 실렸는가."""
+    if not np.isfinite(avg_volume[t]) or avg_volume[t] <= 0:
+        return False
+    if volume[t] < volume_mult * avg_volume[t]:
+        return False
+    return close[t] > pivot >= close[t - 1]
+
+
+def _arrays(candles: pd.DataFrame, volume_window: int):
+    high = candles["high"].to_numpy(float)
+    low = candles["low"].to_numpy(float)
+    close = candles["close"].to_numpy(float)
+    volume = candles["volume"].to_numpy(float)
+    avg = pd.Series(volume).rolling(volume_window, min_periods=volume_window).mean().to_numpy()
+    return high, low, close, volume, avg
+
+
+# =====================================================================
+# 쌍바닥 (Double Bottom, W 형)
+# =====================================================================
+
+@dataclass(frozen=True)
+class DoubleBottomParams:
+    """오닐의 double bottom base.
+
+        좌측 고점 ╲          ┌─ 중간 고점(피벗)          ╱ 돌파
+                   ╲        ╱          ╲              ╱
+                    ╲      ╱            ╲            ╱
+                     ╲____╱              ╲__________╱
+                      1차 저점            2차 저점
+    """
+
+    base_min: int = 35
+    base_max: int = 260
+    depth_min: float = 0.12
+    depth_max: float = 0.50
+    low_tolerance: float = 0.07     # 2차 저점이 1차 저점 대비 ±이 비율 안
+    peak_min_rise: float = 0.05     # 중간 고점이 저점보다 이만큼은 높아야 W 가 된다
+    peak_below_rim: float = 0.97    # 중간 고점은 좌측 고점보다 낮아야 한다 (베이스 안)
+    leg_min: int = 8                # 각 다리의 최소 길이
+    prior_gain: float = 0.20
+    prior_window: int = 60
+    breakout_volume: float = 1.40
+    volume_window: int = 50
+
+
+def double_bottom(candles: pd.DataFrame, params: DoubleBottomParams = DoubleBottomParams()) -> pd.Series:
+    """쌍바닥 돌파 봉에서 True. 피벗은 두 저점 사이의 중간 고점."""
+    high, low, close, volume, avg = _arrays(candles, params.volume_window)
+    n = len(candles)
+    hit = np.zeros(n, dtype=bool)
+
+    for t in range(params.prior_window + params.base_min, n):
+        if not np.isfinite(avg[t]) or avg[t] <= 0 or volume[t] < params.breakout_volume * avg[t]:
+            continue
+
+        for base_len in range(params.base_min, params.base_max + 1, 5):
+            b_start = t - base_len
+            if b_start - params.prior_window < 0:
+                break
+
+            left_rim = high[b_start:b_start + max(1, base_len // 6)].max()
+            if left_rim <= 0:
+                continue
+
+            # 1차 저점: 베이스 앞 절반, 2차 저점: 뒤 절반
+            mid = b_start + base_len // 2
+            i1 = int(np.argmin(low[b_start:mid])) + b_start
+            i2 = int(np.argmin(low[mid:t])) + mid
+            if i2 - i1 < params.leg_min * 2:
+                continue
+
+            l1, l2 = low[i1], low[i2]
+            if l1 <= 0 or abs(l2 / l1 - 1) > params.low_tolerance:
+                continue
+
+            depth = (left_rim - min(l1, l2)) / left_rim
+            if not (params.depth_min <= depth <= params.depth_max):
+                continue
+
+            # 중간 고점 = 피벗
+            peak_idx = int(np.argmax(high[i1:i2])) + i1
+            pivot = high[peak_idx]
+            if peak_idx - i1 < params.leg_min or i2 - peak_idx < params.leg_min:
+                continue
+            if pivot / max(l1, l2) - 1 < params.peak_min_rise:
+                continue
+            if pivot > left_rim * params.peak_below_rim:
+                continue
+
+            if not _breakout(close, volume, avg, t, pivot, params.breakout_volume):
+                continue
+            if not _prior_uptrend(close, b_start, params.prior_window, params.prior_gain):
+                continue
+
+            hit[t] = True
+            break
+
+    return pd.Series(hit, index=candles.index, name="double_bottom")
+
+
+# =====================================================================
+# 플랫 베이스 (Flat Base)
+# =====================================================================
+
+@dataclass(frozen=True)
+class FlatBaseParams:
+    """오닐의 flat base — 상승 후 좁은 횡보. 깊이가 얕은 것이 특징이다."""
+
+    base_min: int = 25              # 최소 5주
+    base_max: int = 90
+    depth_max: float = 0.15         # 베이스 전체 깊이 상한
+    drift_max: float = 0.10         # 베이스 시작가 대비 종료가 이동폭 상한 (평평함)
+    prior_gain: float = 0.20
+    prior_window: int = 60
+    breakout_volume: float = 1.40
+    volume_window: int = 50
+
+
+def flat_base(candles: pd.DataFrame, params: FlatBaseParams = FlatBaseParams()) -> pd.Series:
+    high, low, close, volume, avg = _arrays(candles, params.volume_window)
+    n = len(candles)
+    hit = np.zeros(n, dtype=bool)
+
+    for t in range(params.prior_window + params.base_min, n):
+        if not np.isfinite(avg[t]) or avg[t] <= 0 or volume[t] < params.breakout_volume * avg[t]:
+            continue
+
+        for base_len in range(params.base_min, params.base_max + 1, 5):
+            b_start = t - base_len
+            if b_start - params.prior_window < 0:
+                break
+
+            top = high[b_start:t].max()
+            bottom = low[b_start:t].min()
+            if top <= 0 or (top - bottom) / top > params.depth_max:
+                continue
+            # 평평함: 시작과 끝이 크게 벌어지지 않아야 한다 (기울어진 채널 제외)
+            if abs(close[t - 1] / close[b_start] - 1) > params.drift_max:
+                continue
+            if not _breakout(close, volume, avg, t, top, params.breakout_volume):
+                continue
+            if not _prior_uptrend(close, b_start, params.prior_window, params.prior_gain):
+                continue
+
+            hit[t] = True
+            break
+
+    return pd.Series(hit, index=candles.index, name="flat_base")
+
+
+# =====================================================================
+# 상승 깃발 (Bull Flag)
+# =====================================================================
+
+@dataclass(frozen=True)
+class BullFlagParams:
+    """급등(깃대) 후 얕고 짧은 조정(깃발), 그리고 재돌파."""
+
+    pole_min: int = 5
+    pole_max: int = 30
+    pole_gain: float = 0.20         # 깃대 상승률 하한
+    flag_min: int = 5
+    flag_max: int = 25
+    flag_retrace_max: float = 0.50  # 깃대 상승분의 절반 이상 되돌리면 깃발이 아니다
+    flag_depth_max: float = 0.15
+    flag_volume_max: float = 0.90   # 깃발 거래량 / 깃대 거래량
+    flag_starts_at_top: float = 0.97  # 깃발 첫 봉 고가 / 깃대 고점.
+                                      # 깃발은 깃대 꼭대기에서 시작해야 한다.
+                                      # 없으면 하락 도중의 반등 구간을 깃발로 잡는다.
+    breakout_volume: float = 1.40
+    volume_window: int = 50
+
+
+def bull_flag(candles: pd.DataFrame, params: BullFlagParams = BullFlagParams()) -> pd.Series:
+    high, low, close, volume, avg = _arrays(candles, params.volume_window)
+    n = len(candles)
+    hit = np.zeros(n, dtype=bool)
+
+    for t in range(params.volume_window + params.pole_max + params.flag_max, n):
+        if not np.isfinite(avg[t]) or avg[t] <= 0 or volume[t] < params.breakout_volume * avg[t]:
+            continue
+
+        for flag_len in range(params.flag_min, params.flag_max + 1):
+            f_start = t - flag_len
+            flag_high = high[f_start:t].max()
+            flag_low = low[f_start:t].min()
+            if flag_high <= 0 or (flag_high - flag_low) / flag_high > params.flag_depth_max:
+                continue
+            if not _breakout(close, volume, avg, t, flag_high, params.breakout_volume):
+                continue
+
+            for pole_len in range(params.pole_min, params.pole_max + 1):
+                p_start = f_start - pole_len
+                if p_start < 0:
+                    break
+                pole_low = low[p_start]
+                pole_high = high[p_start:f_start].max()
+                if pole_low <= 0 or pole_high / pole_low - 1 < params.pole_gain:
+                    continue
+                # 깃발은 깃대 꼭대기에서 시작해야 한다
+                if high[f_start] < pole_high * params.flag_starts_at_top:
+                    continue
+                # 되돌림이 깃대 상승분의 절반을 넘으면 깃발이 아니다
+                if (pole_high - flag_low) / (pole_high - pole_low) > params.flag_retrace_max:
+                    continue
+                pole_volume = volume[p_start:f_start].mean()
+                if pole_volume <= 0:
+                    continue
+                if volume[f_start:t].mean() > params.flag_volume_max * pole_volume:
+                    continue
+
+                hit[t] = True
+                break
+            if hit[t]:
+                break
+
+    return pd.Series(hit, index=candles.index, name="bull_flag")
+
+
+# =====================================================================
+# 상승 삼각형 (Ascending Triangle)
+# =====================================================================
+
+@dataclass(frozen=True)
+class AscendingTriangleParams:
+    """수평 저항 + 높아지는 저점. 매물이 소진되며 위로 밀린다는 형태."""
+
+    base_min: int = 25
+    base_max: int = 120
+    resistance_band: float = 0.04   # 고점들이 이 폭 안에 모여야 수평 저항
+    min_touches: int = 3            # 저항선 접촉 횟수
+    slope_min: float = 0.0002       # 저점 회귀 기울기 하한 (봉당 비율)
+    rising_low_min: float = 0.03    # 뒤 1/3 저점이 앞 1/3 저점보다 이만큼 높아야 한다
+                                    # (회귀 기울기만 보면 창을 짧게 잡아 상승 구간만
+                                    #  담는 식으로 우회된다)
+    depth_max: float = 0.30
+    prior_gain: float = 0.10
+    prior_window: int = 60
+    breakout_volume: float = 1.40
+    volume_window: int = 50
+
+
+def ascending_triangle(
+    candles: pd.DataFrame, params: AscendingTriangleParams = AscendingTriangleParams()
+) -> pd.Series:
+    high, low, close, volume, avg = _arrays(candles, params.volume_window)
+    n = len(candles)
+    hit = np.zeros(n, dtype=bool)
+
+    for t in range(params.prior_window + params.base_min, n):
+        if not np.isfinite(avg[t]) or avg[t] <= 0 or volume[t] < params.breakout_volume * avg[t]:
+            continue
+
+        for base_len in range(params.base_min, params.base_max + 1, 5):
+            b_start = t - base_len
+            if b_start - params.prior_window < 0:
+                break
+
+            seg_high = high[b_start:t]
+            seg_low = low[b_start:t]
+            resistance = seg_high.max()
+            if resistance <= 0:
+                continue
+            if (resistance - seg_low.min()) / resistance > params.depth_max:
+                continue
+
+            # 수평 저항: 고점들이 좁은 띠 안에 여러 번 닿아야 한다
+            touches = int((seg_high >= resistance * (1 - params.resistance_band)).sum())
+            if touches < params.min_touches:
+                continue
+
+            # 저점은 우상향해야 한다. 회귀 기울기만 쓰면 창을 짧게 잡아
+            # 상승 구간만 담는 식으로 우회되므로, 앞/뒤 1/3 저점도 함께 비교한다.
+            x = np.arange(len(seg_low), dtype=float)
+            slope = np.polyfit(x, seg_low, 1)[0] / max(seg_low.mean(), 1e-9)
+            if slope < params.slope_min:
+                continue
+            third = max(1, len(seg_low) // 3)
+            early_low, late_low = seg_low[:third].min(), seg_low[-third:].min()
+            if early_low <= 0 or late_low / early_low - 1 < params.rising_low_min:
+                continue
+
+            if not _breakout(close, volume, avg, t, resistance, params.breakout_volume):
+                continue
+            if not _prior_uptrend(close, b_start, params.prior_window, params.prior_gain):
+                continue
+
+            hit[t] = True
+            break
+
+    return pd.Series(hit, index=candles.index, name="ascending_triangle")
+
+
+PATTERNS = {
+    "cup_with_handle": lambda c: cup_with_handle(c),
+    "double_bottom": double_bottom,
+    "flat_base": flat_base,
+    "bull_flag": bull_flag,
+    "ascending_triangle": ascending_triangle,
+}
+
+
 def cup_with_handle_loose(candles: pd.DataFrame) -> pd.Series:
     """완화판. 원 기준이 임의적이라는 점을 확인하기 위한 대조군.
 

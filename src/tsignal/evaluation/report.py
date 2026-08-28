@@ -743,85 +743,99 @@ def build_pattern(
     cost_bps: float = 28.0,
     n_periods: int = 4,
     alpha: float = 0.05,
+    fdr_alpha: float = 0.10,
+    min_events: int = 100,
 ) -> str:
-    """차트 형태 패턴 리포트 (컵앤핸들 + 완화 대조군)."""
+    """차트 형태 패턴 리포트 — 여러 패턴을 같은 잣대로 줄 세운다."""
     from dataclasses import replace
 
-    from ..signals.patterns import CupHandleParams, cup_with_handle, cup_with_handle_loose
+    from ..signals.patterns import (
+        PATTERNS, CupHandleParams, cup_with_handle, cup_with_handle_loose,
+    )
     from .eventstudy import calendar_time_portfolio, compare_holdings
-    from .validation import deflated_threshold
+    from .validation import benjamini_hochberg, deflated_threshold, p_from_t
 
-    variants = {
-        "엄격(오닐 기준)": cup_with_handle,
-        "완화(대조군)": cup_with_handle_loose,
-    }
-    threshold = deflated_threshold(len(variants) * len(holdings), alpha)
+    variants: dict[str, object] = dict(PATTERNS)
+    variants["완화컵(대조군)"] = cup_with_handle_loose
 
     out: list[str] = []
     add = out.append
 
-    add(f"# 차트 패턴 리포트 — 컵앤핸들 · {len(candles_by_code)}종목\n")
+    add(f"# 차트 패턴 리포트 — {len(variants)}개 패턴 · {len(candles_by_code)}종목\n")
     add(f"- 생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    add(f"- 왕복 매매비용 {cost_bps:.0f}bp 차감")
-    add(f"- 가설 {len(variants) * len(holdings)}개 동시검정 → 보정 문턱 |t| ≥ {threshold:.2f}\n")
+    add(f"- 왕복 매매비용 {cost_bps:.0f}bp 차감\n")
 
-    add("## 0. 왜 캘린더-타임 포트폴리오인가\n")
-    add("\"신호 후 60일 수익률\"을 이벤트마다 계산하면 창이 서로 겹친다. 겹침을 피하려고 "
-        "이벤트를 60일씩 띄워 고르면 표본의 대부분을 버리게 된다 "
-        "(실측: 이벤트 1,900여 개 → 유효 관측 약 20개).\n")
-    add("그래서 관점을 뒤집는다. **매일의 포트폴리오 수익률**을 본다 — 지난 h일 안에 "
-        "신호가 뜬 종목을 동일가중으로 담고, 그날의 초과수익(전 종목 평균 대비)을 기록한다. "
-        "이 일별 계열은 겹치지 않으므로 t검정이 그대로 유효하고, 표본도 버리지 않는다. "
-        "실제 운용에도 더 가깝다.\n")
-    add("> t 는 **Newey-West** 보정값이다. 포트폴리오가 매일 거의 같은 종목을 들고 있어 "
-        "일별 수익률이 서로 독립이 아니기 때문이다.\n")
-    add("> 벤치마크는 **유니버스 전체**의 그날 평균이다. 이벤트가 있는 종목만으로 평균을 "
-        "내면 벤치마크가 표본과 함께 움직여 초과수익이 왜곡된다.\n")
+    add("## 0. 방법\n")
+    add("**캘린더-타임 포트폴리오.** \"신호 후 60일 수익률\"을 이벤트마다 계산하면 창이 겹친다. "
+        "겹침을 피하려고 이벤트를 띄워 고르면 표본의 대부분을 버린다 "
+        "(실측: 1,900여 개 → 약 20개). 그래서 관점을 뒤집어 **매일의 포트폴리오 수익률**을 본다 — "
+        "지난 h일 안에 신호가 뜬 종목을 동일가중으로 담고 그날의 초과수익을 기록한다. "
+        "일별 계열은 겹치지 않으므로 t검정이 유효하고 표본도 버리지 않는다.\n")
+    add("- t 는 **Newey-West** 보정값이다 (포트폴리오가 매일 거의 같은 종목을 들고 있으므로).")
+    add("- 벤치마크는 **유니버스 전체**의 그날 평균이다 (이벤트 종목만으로 내면 왜곡된다).")
+    add("- 파라미터는 원저자 기준을 그대로 옮겼고 이 데이터로 튜닝하지 않았다.\n")
 
-    events = {name: {code: fn(candles) for code, candles in candles_by_code.items()}
-              for name, fn in variants.items()}
+    events = {}
+    for name, fn in variants.items():
+        events[name] = {code: fn(candles) for code, candles in candles_by_code.items()}
 
-    add("## 1. 보유기간별 성적\n")
+    rows = []
     for name, evs in events.items():
+        total = sum(int(series.sum()) for series in evs.values())
+        if total < min_events:
+            continue
         table = compare_holdings(evs, candles_by_code, holdings=holdings, cost_bps=cost_bps)
-        add(f"### {name}\n")
-        add(_md_table(table.round(3)))
-        add("")
+        for hold, row in table.iterrows():
+            rows.append({"패턴": name, "보유": hold, "이벤트": int(row["이벤트"]),
+                         "평균보유종목": row["평균보유종목"],
+                         "연환산%": row["연환산%"], "t": row["t"]})
+
+    frame = pd.DataFrame(rows)
+    threshold = deflated_threshold(len(frame), alpha)
+    frame["p"] = p_from_t(frame["t"].to_numpy(), None)
+    frame["BH통과"] = benjamini_hochberg(frame["p"].to_numpy(), fdr_alpha) & (frame["t"] > 0)
+    frame["Šidák통과"] = frame["t"] >= threshold
+
+    add("## 1. 전체 결과\n")
+    add(f"가설 {len(frame)}개(패턴 × 보유기간) 동시검정.\n")
+    add(f"- **Šidák** 문턱 |t| ≥ {threshold:.2f} — 하나라도 틀리면 안 된다(FWER)를 통제. 보수적.")
+    add(f"- **BH-FDR**(α={fdr_alpha:.0%}) — 채택한 것 중 몇 %가 가짜여도 되는가를 통제. "
+        "스크리닝에 적합.\n")
+    ranked = frame.sort_values("t", ascending=False).set_index(["패턴", "보유"])
+    add(_md_table(ranked[["이벤트", "평균보유종목", "연환산%", "t", "p", "BH통과", "Šidák통과"]].round(4)))
+    survivors = ranked[ranked["BH통과"]]
+    add(f"\nBH-FDR 통과: **{', '.join(f'{a}({b}일)' for a, b in survivors.index) or '없음'}**\n")
 
     add("## 2. 기간 안정성\n")
-    add("전체 기간 하나로는 한 구간이 다 벌어준 것을 구분할 수 없다. 구간을 나눠 부호가 "
-        "유지되는지 본다.\n")
+    add("전체 기간 하나로는 한 구간이 다 벌어준 것을 구분할 수 없다.\n")
     all_days = sorted(set().union(*[c.index for c in candles_by_code.values()]))
     cuts = [all_days[i * len(all_days) // n_periods] for i in range(n_periods)] + [all_days[-1]]
     best_hold = holdings[-1]
 
+    stability = []
     for name, evs in events.items():
-        rows = []
+        record: dict[str, object] = {"패턴": name}
+        positive = 0
         for i in range(n_periods):
             window = {
                 code: candles[(candles.index >= cuts[i]) & (candles.index <= cuts[i + 1])]
                 for code, candles in candles_by_code.items()
             }
-            window = {code: candles for code, candles in window.items() if len(candles) > 60}
-            sliced = {code: evs[code].reindex(candles.index).fillna(False)
-                      for code, candles in window.items()}
-            result = calendar_time_portfolio(
-                sliced, window, holding_days=best_hold, cost_bps=cost_bps
-            )
-            rows.append({
-                "구간": f"{cuts[i]:%Y-%m}~{cuts[i + 1]:%Y-%m}",
-                "이벤트": result.n_events,
-                "연환산%": result.annualized * 100,
-                "t": result.t_stat,
-            })
-        table = pd.DataFrame(rows).set_index("구간")
-        add(f"### {name} · 보유 {best_hold}일\n")
-        add(_md_table(table.round(2)))
-        add(f"\n양수 구간 {int((table['연환산%'] > 0).sum())}/{len(table)}\n")
+            window = {code: c for code, c in window.items() if len(c) > 60}
+            sliced = {code: evs[code].reindex(c.index).fillna(False) for code, c in window.items()}
+            result = calendar_time_portfolio(sliced, window, holding_days=best_hold, cost_bps=cost_bps)
+            value = result.annualized * 100 if not result.daily.empty else float("nan")
+            record[f"{cuts[i]:%y-%m}~"] = value
+            positive += int(np.isfinite(value) and value > 0)
+        record["양수구간"] = f"{positive}/{n_periods}"
+        stability.append(record)
+    add(f"보유 {best_hold}일 · 연환산 %\n")
+    add(_md_table(pd.DataFrame(stability).set_index("패턴").round(1)))
+    add("")
 
-    add("## 3. 파라미터 민감도\n")
-    add("기준값을 조금 바꿔도 결과가 유지되는지 본다. 한 조합에서만 나오는 성과는 "
-        "우연이다. **어떤 조건을 풀었을 때 무너지는가**가 그 조건의 중요도를 말해준다.\n")
+    add("## 3. 파라미터 민감도 — 컵앤핸들\n")
+    add("기준값을 조금 바꿔도 결과가 유지되는지, 그리고 **어떤 조건을 풀었을 때 무너지는가**를 본다. "
+        "후자가 그 조건의 중요도를 말해준다.\n")
     base = CupHandleParams()
     perturbations = {
         "기준(오닐)": base,
@@ -841,30 +855,27 @@ def build_pattern(
         "핸들위치 조건 해제": replace(base, handle_upper_half=0.0),
         "봉우리 조건 해제": replace(base, rim_is_peak=0.0, rim_position=1.0),
     }
-    rows = []
+    sensitivity = []
     for label, params in perturbations.items():
-        evs = {code: cup_with_handle(candles, params)
-               for code, candles in candles_by_code.items()}
-        result = calendar_time_portfolio(
-            evs, candles_by_code, holding_days=best_hold, cost_bps=cost_bps
-        )
-        rows.append({"변형": label, "이벤트": result.n_events,
-                     "연환산%": result.annualized * 100, "t": result.t_stat})
-    table = pd.DataFrame(rows).set_index("변형")
+        evs = {code: cup_with_handle(c, params) for code, c in candles_by_code.items()}
+        result = calendar_time_portfolio(evs, candles_by_code, holding_days=best_hold, cost_bps=cost_bps)
+        sensitivity.append({"변형": label, "이벤트": result.n_events,
+                            "연환산%": result.annualized * 100, "t": result.t_stat})
+    table = pd.DataFrame(sensitivity).set_index("변형")
     add(_md_table(table.round(2)))
     add(f"\n연환산 양수 {int((table['연환산%'] > 0).sum())}/{len(table)} · "
         f"t>2 {int((table['t'] > 2).sum())}/{len(table)}\n")
-
     weakest = table["t"].idxmin()
     add(f"> 가장 크게 무너지는 변형은 `{weakest}` (t={table.loc[weakest, 't']:.2f}, "
-        f"연환산 {table.loc[weakest, '연환산%']:.1f}%). 그 조건이 이 패턴의 핵심이라는 뜻이다.\n")
+        f"연환산 {table.loc[weakest, '연환산%']:.1f}%). 그 조건이 이 패턴의 핵심이다.\n")
 
     add("## 4. 한계\n")
-    add(f"- **{best_hold}일 보유에서만 작동한다.** 짧은 보유는 유의하지 않다 — 단타가 아니라 스윙이다.")
-    add("- 개별 구간의 t 는 유의 수준에 못 미친다. 전체를 합쳐야 문턱을 넘는다.")
-    add("- 이벤트가 시간에 걸쳐 겹쳐 평균 수십 종목을 동시 보유한다. 그만한 자금과 분산이 전제다.")
+    add(f"- 살아남은 것이 있다면 **{best_hold}일 보유에서만**이다. 짧은 보유는 유의하지 않다 — "
+        "스윙이지 단타가 아니다.")
+    add("- 패턴을 더 시험할수록 문턱이 올라간다. 같은 결과라도 나중에 잰 가설이 많으면 기각될 수 있다.")
+    add("- 개별 구간의 t 는 대개 유의 수준에 못 미친다. 전체를 합쳐야 문턱을 넘는다.")
+    add("- 이벤트가 겹쳐 수십 종목을 동시 보유한다. 그만한 자금과 분산이 전제다.")
     add("- 현재 상장 종목만 담겨 **생존 편향**이 남아 있다.")
-    add("- 슬리피지는 왕복 5bp×2 로 가정했다. 거래대금이 적은 종목에서는 더 든다.")
     add("- 이 리포트는 매매 권유가 아니다.\n")
 
     return "\n".join(out)

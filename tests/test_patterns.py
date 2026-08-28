@@ -128,3 +128,125 @@ def test_benchmark_uses_the_whole_universe():
     # 한 종목만 이벤트가 있어도 나머지 5종목이 벤치마크에 들어가므로
     # 초과수익이 항상 0 이 되지 않는다.
     assert not np.allclose(result.daily.to_numpy(), 0.0)
+
+
+# =====================================================================
+# 추가 패턴 — 합성 캔들로 모양 판정을 확인한다
+# =====================================================================
+
+from tsignal.signals.patterns import (  # noqa: E402
+    PATTERNS, ascending_triangle, bull_flag, double_bottom, flat_base,
+)
+
+
+def _with_prior(shape: list[float], gain: float = 0.30) -> list[float]:
+    """베이스 앞에 상승 구간을 붙인다. 모든 베이스 패턴의 전제 조건."""
+    start = shape[0]
+    return list(np.linspace(start / (1 + gain), start, 70)) + shape
+
+
+def _volumes(n_prior: int, n_base: int, base_level: float = 1000.0) -> list[float]:
+    return [base_level] * n_prior + [base_level * 0.6] * n_base + [base_level * 3]
+
+
+def test_double_bottom_detects_w_shape():
+    rim = 100.0
+    leg = list(np.linspace(rim, 78, 15)) + list(np.linspace(78, 94, 15)) \
+        + list(np.linspace(94, 79, 15)) + list(np.linspace(79, 93.5, 15))
+    closes = _with_prior(leg) + [96.0]
+    volumes = _volumes(70, len(leg))
+    hits = double_bottom(_candles(closes, volumes))
+    assert hits.iloc[-1], "교과서 쌍바닥을 못 잡았다"
+
+
+def test_double_bottom_rejects_mismatched_lows():
+    """두 저점의 높이가 크게 다르면 쌍바닥이 아니다."""
+    rim = 100.0
+    leg = list(np.linspace(rim, 78, 15)) + list(np.linspace(78, 94, 15)) \
+        + list(np.linspace(94, 60, 15)) + list(np.linspace(60, 93.5, 15))
+    closes = _with_prior(leg) + [96.0]
+    volumes = _volumes(70, len(leg))
+    assert not double_bottom(_candles(closes, volumes)).any()
+
+
+def test_flat_base_detects_tight_range():
+    base = list(100 + np.sin(np.linspace(0, 6 * np.pi, 40)) * 3)   # ±3% 횡보
+    closes = _with_prior(base) + [106.0]
+    volumes = _volumes(70, len(base))
+    assert flat_base(_candles(closes, volumes)).iloc[-1]
+
+
+def test_flat_base_rejects_wide_range():
+    """깊은 조정은 플랫 베이스가 아니다."""
+    base = list(100 + np.sin(np.linspace(0, 6 * np.pi, 40)) * 20)  # ±20%
+    closes = _with_prior(base) + [125.0]
+    volumes = _volumes(70, len(base))
+    assert not flat_base(_candles(closes, volumes)).any()
+
+
+def test_bull_flag_detects_pole_and_flag():
+    pole = list(np.linspace(100, 135, 15))          # +35% 깃대
+    flag = list(np.linspace(135, 127, 5)) + list(np.linspace(127, 133, 5))
+    # 거래량 평균 창(50) + 깃대·깃발 최대 길이만큼 앞자리가 필요하다
+    closes = [100.0] * 110 + pole + flag + [138.0]
+    volumes = [1000.0] * 110 + [2500.0] * len(pole) + [800.0] * len(flag) + [4000.0]
+    assert bull_flag(_candles(closes, volumes)).iloc[-1]
+
+
+def test_bull_flag_rejects_deep_retrace():
+    """깃대 상승분의 절반 넘게 되돌리면 깃발이 아니라 추세 이탈이다."""
+    pole = list(np.linspace(100, 135, 15))
+    flag = list(np.linspace(135, 112, 6)) + list(np.linspace(112, 120, 6))
+    closes = [100.0] * 110 + pole + flag + [136.0]
+    volumes = [1000.0] * 110 + [2500.0] * len(pole) + [800.0] * len(flag) + [4000.0]
+    assert not bull_flag(_candles(closes, volumes)).any()
+
+
+def test_ascending_triangle_needs_rising_lows():
+    """수평 저항 + 높아지는 저점. 저점이 평평하면 삼각형이 아니라 박스다."""
+    rising = []
+    for i in range(5):
+        rising += list(np.linspace(88 + i * 2, 100, 6)) + list(np.linspace(100, 89 + i * 2, 6))
+    flat = []
+    for _ in range(5):
+        flat += list(np.linspace(88, 100, 6)) + list(np.linspace(100, 88, 6))
+
+    for shape, expected in ((rising, True), (flat, False)):
+        closes = _with_prior(shape, gain=0.15) + [104.0]
+        volumes = _volumes(70, len(shape))
+        assert bool(ascending_triangle(_candles(closes, volumes)).any()) is expected
+
+
+def test_all_patterns_require_a_prior_uptrend():
+    """베이스 패턴은 전부 '오르던 종목의 조정'이다.
+
+    컵앤핸들 실측에서 이 조건을 빼자 연환산 초과수익이 +15.9% → +0.6% 로 사라졌다.
+    깃발은 깃대 자체가 상승이므로 별도 조건이 없다 — 그래서 제외한다.
+    """
+    from tsignal.signals.patterns import (
+        AscendingTriangleParams, CupHandleParams, DoubleBottomParams, FlatBaseParams,
+    )
+
+    for params in (CupHandleParams(), DoubleBottomParams(),
+                   FlatBaseParams(), AscendingTriangleParams()):
+        assert params.prior_gain > 0, params
+
+
+def test_pattern_registry_lists_every_detector():
+    assert set(PATTERNS) == {
+        "cup_with_handle", "double_bottom", "flat_base", "bull_flag", "ascending_triangle",
+    }
+    source = SyntheticDataSource(seed=13)
+    candles = source.candles("AAA", Interval.D1, count=500)
+    for name, fn in PATTERNS.items():
+        series = fn(candles)
+        assert series.dtype == bool and len(series) == len(candles), name
+
+
+def test_new_patterns_are_causal():
+    source = SyntheticDataSource(seed=246)
+    candles = source.candles("AAA", Interval.D1, count=800)
+    for name, fn in PATTERNS.items():
+        full = fn(candles)
+        truncated = fn(candles.iloc[:600])
+        assert full.iloc[:600].equals(truncated), f"{name} 이 미래를 보고 있다"
