@@ -73,6 +73,46 @@ GET /api/v1/c-chart/kr-stock/A005930/{period}
 IP 에서는 `tossinvest.com` 의 페이지 라우트가 404를 반환해 청크 다운로드까지
 가지 못했다.
 
+## 2-b. 서버가 라우트 패턴을 알려준다 (탐지기)
+
+응답 헤더에 라우트 패턴이 그대로 실려 온다.
+
+```
+tossinvest-path-pattern: /api/v1/c-chart/{product}/{code}/{stepUnit}
+```
+
+이걸 **존재하는 경로를 찾는 탐지기**로 쓸 수 있다. 이 헤더가 오면 라우트가
+매칭된 것이고, 안 오면 그런 경로가 없는 것이다.
+
+확인된 사실:
+
+- 세 번째 세그먼트의 이름은 `period` 가 아니라 **`stepUnit`** 이다
+- `/api/v1`, `/api/v2`, `/api/v3` 모두 같은 패턴으로 존재한다
+- `chart`, `charts`, `candles`, `candle`, `price-chart`, `stock-chart`,
+  `stock-prices/{code}/period|history|chart|candles` 는 **전부 라우트 없음**
+  → **`c-chart` 가 캔들 경로가 맞다**
+
+그런데도 400 이다. 아래를 전부 시도했고 예외 없이 400 이었다.
+
+- **stepUnit 값 46종**: `day/week/month/year/minute/hour/tick`, 대문자판,
+  `D/W/M/Y`, `1d/1w/1M/5m/15m/30m/1h`, `DAY1/DAY_1/MINUTE1/ONE_DAY`,
+  `daily/weekly/monthly`, 숫자 등 — **의미 없는 값과 응답이 똑같다**
+  → stepUnit 파싱 단계까지 가지도 못한다는 뜻
+- **쿼리 파라미터**: `count/step/size/limit/to/from/dt/timestamp/order/
+  direction/baseDateTime/endDateTime/startDateTime/useAdjustedRate/session/
+  sessionType/priceType` 단독 및 전체 조합
+- **헤더**: `x-device-id`, `browser-tab-id` (CORS 프리플라이트가 허용한다고
+  응답한 두 개), 그리고 `sec-ch-ua`/`sec-fetch-*`/`accept-language` 까지 갖춘
+  완전한 브라우저 헤더 세트
+- **메서드**: GET, POST(JSON 바디)
+
+같은 헤더 세트로 `/api/v2/stock-prices/A005930` 은 **200** 이 온다.
+연결 자체가 막힌 것은 아니다.
+
+에러 바디의 `message` 가 `null` 이라 서버가 무엇을 문제 삼는지 알려주지 않는다.
+남은 후보는 **인증 쿠키** 또는 **이 환경의 출구 IP**(미국 Google Cloud) 다.
+사용자 PC 에서는 동작한다는 보고가 있어 후자일 가능성이 있다.
+
 ## 3. SPA 번들에서 찾아보기 — 실패
 
 파라미터 이름을 코드에서 직접 확인하려고 `tossinvest.com/stocks/A005930` 의
