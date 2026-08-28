@@ -104,8 +104,13 @@ def calendar_time_portfolio(
             continue
         n_events += int(events.sum())
         # 신호는 t 봉 종가에 확정 → t+1 부터 보유하므로 한 칸 민다.
-        entered = events.reindex(candles.index).fillna(False).astype(bool).shift(1)
-        entered = entered.fillna(False).astype(bool)
+        # bool 로 먼저 맞춘 뒤 shift(fill_value=) 로 민다. object dtype 을 거치면
+        # pandas 가 downcasting 경고를 봉마다 뱉고, 그 출력이 실행을 붙잡는다
+        # (실측: 로그 3.4MB, 리포트 생성이 30분 넘게 늘어졌다).
+        entered = (
+            events.reindex(candles.index).fillna(False).astype(bool)
+            .shift(1, fill_value=False).astype(bool)
+        )
         entry_flags[code] = entered
         holding_flags[code] = (
             entered.rolling(holding_days, min_periods=1).max().astype(bool)

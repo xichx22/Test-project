@@ -43,8 +43,12 @@ def _num(x: float, digits: int = 2) -> str:
     return "-" if not np.isfinite(x) else f"{x:.{digits}f}"
 
 
-def _md_table(df: pd.DataFrame, floatfmt: str = "{:.4f}") -> str:
-    """의존성 없이 마크다운 표를 만든다."""
+def _md_table(df: pd.DataFrame, floatfmt: str | None = None) -> str:
+    """의존성 없이 마크다운 표를 만든다.
+
+    floatfmt 를 주지 않으면 값에 맞는 자릿수를 골라 쓴다. 호출부에서 이미
+    round() 한 값에 고정 서식을 씌우면 `1.5` 가 `1.5000` 으로 늘어난다.
+    """
     if df.empty:
         return "_(데이터 없음)_\n"
     body = df.reset_index() if df.index.name else df.copy()
@@ -55,7 +59,12 @@ def _md_table(df: pd.DataFrame, floatfmt: str = "{:.4f}") -> str:
         cells = []
         for v in row:
             if isinstance(v, float):
-                cells.append("-" if not np.isfinite(v) else floatfmt.format(v))
+                if not np.isfinite(v):
+                    cells.append("-")
+                elif floatfmt:
+                    cells.append(floatfmt.format(v))
+                else:
+                    cells.append(f"{v:.4f}".rstrip("0").rstrip(".") or "0")
             elif isinstance(v, pd.Timestamp):
                 cells.append(v.strftime("%Y-%m-%d %H:%M"))
             else:
