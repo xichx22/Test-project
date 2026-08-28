@@ -730,3 +730,148 @@ def write_factor(candles_by_code: dict[str, pd.DataFrame], path: str | Path, **k
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(build_factor(candles_by_code, **kwargs), encoding="utf-8")
     return target
+
+
+# =====================================================================
+# 패턴 리포트 — 캘린더-타임 포트폴리오 기반
+# =====================================================================
+
+def build_pattern(
+    candles_by_code: dict[str, pd.DataFrame],
+    *,
+    holdings: tuple[int, ...] = (5, 10, 20, 60),
+    cost_bps: float = 28.0,
+    n_periods: int = 4,
+    alpha: float = 0.05,
+) -> str:
+    """차트 형태 패턴 리포트 (컵앤핸들 + 완화 대조군)."""
+    from dataclasses import replace
+
+    from ..signals.patterns import CupHandleParams, cup_with_handle, cup_with_handle_loose
+    from .eventstudy import calendar_time_portfolio, compare_holdings
+    from .validation import deflated_threshold
+
+    variants = {
+        "엄격(오닐 기준)": cup_with_handle,
+        "완화(대조군)": cup_with_handle_loose,
+    }
+    threshold = deflated_threshold(len(variants) * len(holdings), alpha)
+
+    out: list[str] = []
+    add = out.append
+
+    add(f"# 차트 패턴 리포트 — 컵앤핸들 · {len(candles_by_code)}종목\n")
+    add(f"- 생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    add(f"- 왕복 매매비용 {cost_bps:.0f}bp 차감")
+    add(f"- 가설 {len(variants) * len(holdings)}개 동시검정 → 보정 문턱 |t| ≥ {threshold:.2f}\n")
+
+    add("## 0. 왜 캘린더-타임 포트폴리오인가\n")
+    add("\"신호 후 60일 수익률\"을 이벤트마다 계산하면 창이 서로 겹친다. 겹침을 피하려고 "
+        "이벤트를 60일씩 띄워 고르면 표본의 대부분을 버리게 된다 "
+        "(실측: 이벤트 1,900여 개 → 유효 관측 약 20개).\n")
+    add("그래서 관점을 뒤집는다. **매일의 포트폴리오 수익률**을 본다 — 지난 h일 안에 "
+        "신호가 뜬 종목을 동일가중으로 담고, 그날의 초과수익(전 종목 평균 대비)을 기록한다. "
+        "이 일별 계열은 겹치지 않으므로 t검정이 그대로 유효하고, 표본도 버리지 않는다. "
+        "실제 운용에도 더 가깝다.\n")
+    add("> t 는 **Newey-West** 보정값이다. 포트폴리오가 매일 거의 같은 종목을 들고 있어 "
+        "일별 수익률이 서로 독립이 아니기 때문이다.\n")
+    add("> 벤치마크는 **유니버스 전체**의 그날 평균이다. 이벤트가 있는 종목만으로 평균을 "
+        "내면 벤치마크가 표본과 함께 움직여 초과수익이 왜곡된다.\n")
+
+    events = {name: {code: fn(candles) for code, candles in candles_by_code.items()}
+              for name, fn in variants.items()}
+
+    add("## 1. 보유기간별 성적\n")
+    for name, evs in events.items():
+        table = compare_holdings(evs, candles_by_code, holdings=holdings, cost_bps=cost_bps)
+        add(f"### {name}\n")
+        add(_md_table(table.round(3)))
+        add("")
+
+    add("## 2. 기간 안정성\n")
+    add("전체 기간 하나로는 한 구간이 다 벌어준 것을 구분할 수 없다. 구간을 나눠 부호가 "
+        "유지되는지 본다.\n")
+    all_days = sorted(set().union(*[c.index for c in candles_by_code.values()]))
+    cuts = [all_days[i * len(all_days) // n_periods] for i in range(n_periods)] + [all_days[-1]]
+    best_hold = holdings[-1]
+
+    for name, evs in events.items():
+        rows = []
+        for i in range(n_periods):
+            window = {
+                code: candles[(candles.index >= cuts[i]) & (candles.index <= cuts[i + 1])]
+                for code, candles in candles_by_code.items()
+            }
+            window = {code: candles for code, candles in window.items() if len(candles) > 60}
+            sliced = {code: evs[code].reindex(candles.index).fillna(False)
+                      for code, candles in window.items()}
+            result = calendar_time_portfolio(
+                sliced, window, holding_days=best_hold, cost_bps=cost_bps
+            )
+            rows.append({
+                "구간": f"{cuts[i]:%Y-%m}~{cuts[i + 1]:%Y-%m}",
+                "이벤트": result.n_events,
+                "연환산%": result.annualized * 100,
+                "t": result.t_stat,
+            })
+        table = pd.DataFrame(rows).set_index("구간")
+        add(f"### {name} · 보유 {best_hold}일\n")
+        add(_md_table(table.round(2)))
+        add(f"\n양수 구간 {int((table['연환산%'] > 0).sum())}/{len(table)}\n")
+
+    add("## 3. 파라미터 민감도\n")
+    add("기준값을 조금 바꿔도 결과가 유지되는지 본다. 한 조합에서만 나오는 성과는 "
+        "우연이다. **어떤 조건을 풀었을 때 무너지는가**가 그 조건의 중요도를 말해준다.\n")
+    base = CupHandleParams()
+    perturbations = {
+        "기준(오닐)": base,
+        "컵 최소 25봉": replace(base, cup_min=25),
+        "컵 최소 50봉": replace(base, cup_min=50),
+        "컵깊이 ≥8%": replace(base, cup_depth_min=0.08),
+        "컵깊이 ≥18%": replace(base, cup_depth_min=0.18),
+        "회복률 88%": replace(base, rim_recovery=0.88),
+        "회복률 97%": replace(base, rim_recovery=0.97),
+        "핸들 3~15봉": replace(base, handle_min=3, handle_max=15),
+        "핸들 8~30봉": replace(base, handle_min=8, handle_max=30),
+        "돌파거래량 1.0배": replace(base, breakout_volume=1.0),
+        "돌파거래량 2.0배": replace(base, breakout_volume=2.0),
+        "선행상승 조건 해제": replace(base, prior_gain=0.0),
+        "선행상승 40%": replace(base, prior_gain=0.40),
+        "U자 조건 해제": replace(base, trough_center=0.9),
+        "핸들위치 조건 해제": replace(base, handle_upper_half=0.0),
+        "봉우리 조건 해제": replace(base, rim_is_peak=0.0, rim_position=1.0),
+    }
+    rows = []
+    for label, params in perturbations.items():
+        evs = {code: cup_with_handle(candles, params)
+               for code, candles in candles_by_code.items()}
+        result = calendar_time_portfolio(
+            evs, candles_by_code, holding_days=best_hold, cost_bps=cost_bps
+        )
+        rows.append({"변형": label, "이벤트": result.n_events,
+                     "연환산%": result.annualized * 100, "t": result.t_stat})
+    table = pd.DataFrame(rows).set_index("변형")
+    add(_md_table(table.round(2)))
+    add(f"\n연환산 양수 {int((table['연환산%'] > 0).sum())}/{len(table)} · "
+        f"t>2 {int((table['t'] > 2).sum())}/{len(table)}\n")
+
+    weakest = table["t"].idxmin()
+    add(f"> 가장 크게 무너지는 변형은 `{weakest}` (t={table.loc[weakest, 't']:.2f}, "
+        f"연환산 {table.loc[weakest, '연환산%']:.1f}%). 그 조건이 이 패턴의 핵심이라는 뜻이다.\n")
+
+    add("## 4. 한계\n")
+    add(f"- **{best_hold}일 보유에서만 작동한다.** 짧은 보유는 유의하지 않다 — 단타가 아니라 스윙이다.")
+    add("- 개별 구간의 t 는 유의 수준에 못 미친다. 전체를 합쳐야 문턱을 넘는다.")
+    add("- 이벤트가 시간에 걸쳐 겹쳐 평균 수십 종목을 동시 보유한다. 그만한 자금과 분산이 전제다.")
+    add("- 현재 상장 종목만 담겨 **생존 편향**이 남아 있다.")
+    add("- 슬리피지는 왕복 5bp×2 로 가정했다. 거래대금이 적은 종목에서는 더 든다.")
+    add("- 이 리포트는 매매 권유가 아니다.\n")
+
+    return "\n".join(out)
+
+
+def write_pattern(candles_by_code: dict[str, pd.DataFrame], path: str | Path, **kwargs) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(build_pattern(candles_by_code, **kwargs), encoding="utf-8")
+    return target

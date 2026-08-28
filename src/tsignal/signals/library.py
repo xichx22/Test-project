@@ -267,6 +267,31 @@ def cmf_turn_positive(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
 
 
 # =====================================================================
+# 7. 차트 형태 패턴
+# =====================================================================
+
+@signal("cup_with_handle", "pattern",
+        rationale="오닐 CANSLIM 의 컵앤핸들. 오르던 종목이 U자로 조정한 뒤 얕은 "
+                  "핸들을 만들고 거래량 실린 돌파를 내면 상승이 이어진다는 가설. "
+                  "지표 교차가 아니라 여러 봉에 걸친 '모양'을 본다.",
+        tags=("pattern", "oneil", "swing"))
+def cup_with_handle_signal(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
+    from .patterns import cup_with_handle
+
+    return cup_with_handle(c)
+
+
+@signal("cup_with_handle_loose", "pattern",
+        rationale="컵앤핸들의 완화판 대조군. 기준을 느슨하게 하면 '패턴다움'이 사라져 "
+                  "성과도 사라지는지 확인한다 — 원 기준의 구체성이 우연이 아님을 보이는 장치.",
+        tags=("pattern", "control"))
+def cup_with_handle_loose_signal(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
+    from .patterns import cup_with_handle_loose
+
+    return cup_with_handle_loose(c)
+
+
+# =====================================================================
 # 6. 청산 신호 (exit) — "언제 팔 것인가"의 후보들
 # =====================================================================
 

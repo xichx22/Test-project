@@ -145,6 +145,69 @@ def non_overlapping_t_stat(values: np.ndarray, horizon: int) -> float:
     return float(np.mean(stats)) if stats else np.nan
 
 
+def spaced_t_stat(days: np.ndarray, values: np.ndarray, horizon: int) -> float:
+    """드문 이벤트용 겹침 보정 t.
+
+    `non_overlapping_t_stat` 은 매 봉 값이 있는 연속 계열을 가정한다.
+    차트 패턴처럼 드문드문 발생하는 이벤트는 날짜가 띄엄띄엄하므로,
+    **서로 horizon 일 이상 떨어진 이벤트만** 남겨 겹침을 없앤다.
+
+    시작점에 따라 남는 집합이 달라지므로 여러 시작점으로 반복해 평균한다.
+    """
+    day = np.asarray(days, dtype="datetime64[D]").astype(np.int64)
+    val = np.asarray(values, dtype=float)
+    order = np.argsort(day)
+    day, val = day[order], val[order]
+
+    # 같은 날짜의 이벤트는 먼저 평균 낸다 (횡단면 상관 제거).
+    uniq, inverse = np.unique(day, return_inverse=True)
+    means = np.bincount(inverse, weights=val) / np.bincount(inverse)
+    if len(uniq) < 3:
+        return np.nan
+
+    stats = []
+    for start in range(min(horizon, len(uniq))):
+        picked, last = [], -(10**9)
+        for i in range(start, len(uniq)):
+            if uniq[i] - last >= horizon:
+                picked.append(means[i])
+                last = uniq[i]
+        if len(picked) < 3:
+            continue
+        arr = np.asarray(picked)
+        sd = arr.std(ddof=1)
+        if sd > 0:
+            stats.append(arr.mean() / (sd / np.sqrt(len(arr))))
+    return float(np.mean(stats)) if stats else np.nan
+
+
+def newey_west_t_stat(values: np.ndarray, lags: int | None = None) -> float:
+    """자기상관을 감안한 t (Newey-West, Bartlett 커널).
+
+    캘린더-타임 포트폴리오는 매일 거의 같은 종목을 들고 있으므로 일별 수익률이
+    서로 독립이 아니다. 평범한 t 는 이 지속성을 무시해 부풀려질 수 있다.
+    lags 를 주지 않으면 Newey-West 의 표준 규칙 4*(n/100)^(2/9) 을 쓴다.
+    """
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    n = len(arr)
+    if n < 10:
+        return np.nan
+    if lags is None:
+        lags = int(np.floor(4 * (n / 100) ** (2 / 9)))
+    lags = max(0, min(lags, n - 2))
+
+    resid = arr - arr.mean()
+    gamma0 = float(resid @ resid) / n
+    variance = gamma0
+    for lag in range(1, lags + 1):
+        cov = float(resid[lag:] @ resid[:-lag]) / n
+        variance += 2 * (1 - lag / (lags + 1)) * cov
+    if variance <= 0:
+        return np.nan
+    return float(arr.mean() / np.sqrt(variance / n))
+
+
 def bootstrap_ci(r: pd.Series, *, n: int = 2000, alpha: float = 0.05, seed: int = 7) -> tuple[float, float]:
     """기대수익률의 부트스트랩 신뢰구간. 하한이 0 위면 신호가 살아남았다고 본다."""
     r = _clean(r).to_numpy()
