@@ -607,3 +607,110 @@ def write_walkforward(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(build_walkforward(candles_by_code, **kwargs), encoding="utf-8")
     return target
+
+
+# =====================================================================
+# 팩터 리포트 — 이진 필터가 아니라 연속 변수로
+# =====================================================================
+
+FACTOR_DEFAULT = ("atrp_14", "ret_120", "ema60_gap", "ret_20", "ret_5", "rsi_14", "rangepos_20")
+
+
+def build_factor(
+    candles_by_code: dict[str, pd.DataFrame],
+    *,
+    interval: Interval = Interval.D1,
+    horizons: tuple[int, ...] = (5, 20),
+    factors: tuple[str, ...] = FACTOR_DEFAULT,
+    n_buckets: int = 10,
+    control: str = "ret_120",
+    alpha: float = 0.05,
+) -> str:
+    """횡단면 팩터 리포트."""
+    from .factor import (
+        build_factor_panel, dose_response, double_sort, factor_correlations, market_regression,
+    )
+    from .validation import deflated_threshold
+
+    out: list[str] = []
+    add = out.append
+    threshold = deflated_threshold(len(factors), alpha)
+
+    add(f"# 횡단면 팩터 리포트 — {len(candles_by_code)}종목 ({interval.value})\n")
+    add(f"- 생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    add(f"- 팩터 {len(factors)}개 동시 검정 → 보정 문턱 |t| ≥ {threshold:.2f}\n")
+
+    add("## 0. 이 리포트가 거르는 네 가지\n")
+    add("| 함정 | 증상 | 대응 |")
+    add("| --- | --- | --- |")
+    add("| 시장 드리프트 | 보유기간을 늘리면 아무거나 유의해짐 | 같은 날 전 종목 평균을 뺀 초과수익으로 검정 |")
+    add("| 횡단면 상관 | 같은 날 100종목이 동시에 신호 → 표본 100개로 셈 | 날짜 군집 보정 |")
+    add("| **전방수익률 겹침** | 20일 수익률을 매일 계산하면 19/20을 공유 | **겹치지 않는 표본으로 t 재계산** |")
+    add("| **베타** | 횡단면 평균을 빼도 고베타는 상승장에서 더 오름 | **시장수익률에 회귀해 알파/베타 분리** |")
+    add("")
+
+    for horizon in horizons:
+        panel = build_factor_panel(candles_by_code, interval=interval, horizon=horizon)
+        add(f"## 보유 {horizon}봉\n")
+        add(f"표본 {len(panel.frame):,}행 · {panel.codes}종목 · {panel.days}일\n")
+
+        rows = []
+        for factor in factors:
+            meta = dose_response(panel, factor, n_buckets=n_buckets).attrs
+            reg = market_regression(panel, factor, n_buckets=n_buckets)
+            rows.append({
+                "factor": factor,
+                "단조성ρ": meta["monotone_rho"],
+                "스프레드%": abs(meta["spread_mean"]) * 100,
+                "겹침t": abs(meta["spread_t_overlap"]),
+                "비겹침t": abs(meta["spread_t"]),
+                "알파%": reg["alpha"] * 100,
+                "알파t": abs(reg["alpha_t_nonoverlap"]),
+                "베타": reg["beta"],
+                "시장R2": reg["market_r2"],
+                "판정": "채택후보" if abs(reg["alpha_t_nonoverlap"]) >= threshold else "기각",
+            })
+        table = pd.DataFrame(rows).set_index("factor").sort_values("알파t", ascending=False)
+        add(_md_table(table.round(3)))
+
+        worst = table["겹침t"].idxmax()
+        add(f"\n> 겹침 보정만으로 `{worst}` 의 t 가 "
+            f"{table.loc[worst, '겹침t']:.2f} → {table.loc[worst, '비겹침t']:.2f} 로 내려간다. "
+            f"베타까지 걷어내면 알파 t 는 {table.loc[worst, '알파t']:.2f} 다.\n")
+
+    add("## 팩터 간 순위상관\n")
+    add("상관이 높으면 같은 것을 다르게 부르고 있을 뿐이다. "
+        "여러 팩터가 '유의'해 보여도 실제로는 하나를 여러 번 센 것일 수 있다.\n")
+    panel = build_factor_panel(candles_by_code, interval=interval, horizon=horizons[-1])
+    add(_md_table(factor_correlations(panel, factors)))
+    add("")
+
+    add(f"## 이중정렬 — `{control}` 을 통제하면\n")
+    add(f"어떤 팩터가 사실은 `{control}` 의 다른 이름일 수 있다. "
+        f"`{control}` 분위 **안에서** 그 팩터의 스프레드가 여전히 벌어지는지 본다. "
+        "평평해지면 새로 발견한 것이 아니라 같은 것을 재발견한 것이다.\n")
+    for factor in ("ema60_gap", "atrp_14"):
+        if factor == control or factor not in factors:
+            continue
+        table = double_sort(panel, factor, control, n_buckets=5)
+        add(f"### `{factor}` × `{control}` (셀 값 = 평균 초과수익 %)\n")
+        add(_md_table((table * 100).round(3)))
+        spreads = table.attrs["spreads"]
+        add(f"\n통제 분위별 스프레드 t: "
+            f"{', '.join(f'{v:+.2f}' for v in spreads['t'])} — "
+            f"{'방향이 일정하지 않다' if spreads['t'].gt(0).nunique() > 1 else '방향이 일정하다'}\n")
+
+    add("## 한계\n")
+    add("- 현재 상장 종목만 담겨 **생존 편향**이 남아 있다.")
+    add("- 매매비용 차감 전이다. 분위 재구성 회전율까지 반영하면 더 나빠진다.")
+    add("- 이 표본 기간이 특정 레짐일 수 있다.")
+    add("- 이 리포트는 매매 권유가 아니다.\n")
+
+    return "\n".join(out)
+
+
+def write_factor(candles_by_code: dict[str, pd.DataFrame], path: str | Path, **kwargs) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(build_factor(candles_by_code, **kwargs), encoding="utf-8")
+    return target

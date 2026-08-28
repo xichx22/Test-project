@@ -121,9 +121,11 @@ class CombinationLab:
         panel_columns: tuple[list[str], list[str]] | None = None,
         start: pd.Timestamp | None = None,
         end: pd.Timestamp | None = None,
+        baseline: str = "cross_sectional",
     ) -> None:
         self.horizon = horizon
         self.interval = interval
+        self.baseline = baseline
 
         if panels is None:
             if candles_by_code is None or interval is None:
@@ -153,16 +155,17 @@ class CombinationLab:
         horizon: int = 5,
         start: pd.Timestamp | None = None,
         end: pd.Timestamp | None = None,
+        baseline: str = "cross_sectional",
     ) -> "CombinationLab":
         """미리 만든 판에서 특정 기간만 잘라 Lab 을 만든다 (워크포워드용)."""
         return cls(panels=panels, panel_columns=panel_columns, horizon=horizon,
-                   start=start, end=end)
+                   start=start, end=end, baseline=baseline)
 
     def _assemble(
         self, panels: Sequence[SymbolPanel],
         start: pd.Timestamp | None, end: pd.Timestamp | None,
     ) -> None:
-        trig_parts, filt_parts, ret_parts, exc_parts, code_parts, day_parts = [], [], [], [], [], []
+        trig_parts, filt_parts, ret_parts, code_parts, day_parts = [], [], [], [], []
         self.codes: list[str] = []
 
         for panel in panels:
@@ -175,17 +178,11 @@ class CombinationLab:
             if keep.sum() < 2:
                 continue
 
-            fwd = panel.fwd[keep]
-            # 기준선은 **그 창 안에서** 계산해야 한다. 전체 기간 평균을 쓰면
-            # 창 밖의 정보가 초과수익에 섞여 들어간다.
-            baseline = float(fwd.mean())
-
             self.codes.append(panel.code)
             code_id = len(self.codes) - 1
             trig_parts.append(panel.trig[keep])
             filt_parts.append(panel.filt[keep])
-            ret_parts.append(fwd)
-            exc_parts.append(fwd - baseline)
+            ret_parts.append(panel.fwd[keep])
             code_parts.append(np.full(int(keep.sum()), code_id, dtype=np.int32))
             day_parts.append(panel.day[keep])
 
@@ -195,10 +192,44 @@ class CombinationLab:
         self.trig = np.concatenate(trig_parts)
         self.filt = np.concatenate(filt_parts)
         self.ret = np.concatenate(ret_parts)
-        self.excess = np.concatenate(exc_parts)
         self.code_idx = np.concatenate(code_parts)
         self.day = np.concatenate(day_parts)
         self.n_codes = len(self.codes)
+        self.excess = self._excess(self.ret, self.code_idx, self.day)
+
+    def _excess(self, ret: np.ndarray, code_idx: np.ndarray, day: np.ndarray) -> np.ndarray:
+        """초과수익 = 수익률 − 기준선.
+
+        기준선을 무엇으로 잡느냐가 결론을 뒤집는다.
+
+        cross_sectional (기본, 권장)
+            같은 **날짜**의 전 종목 평균을 뺀다. "그날 아무 종목이나 사는 것"이
+            기준이 되므로 시장 전체의 움직임이 완전히 제거된다.
+
+        time_series (인공물 주의)
+            같은 **종목**의 창 안 평균을 뺀다. 겉보기엔 자연스럽지만
+            **창 안 평균으로 창 안 관측을 빼면 인공적인 평균회귀가 생긴다.**
+            "자기 평균보다 낮은 상태"를 고르는 조건(예: 종가<60EMA)은 정의상
+            평균 아래를 고르고, 그 뒤에는 평균으로 되돌아온다 — 엣지가 전혀 없어도.
+
+            실측: 엣지가 0인 랜덤워크 20종목에서 `trend_down` 의 lift 가
+            60일 창에서는 78% 양수(중앙 +0.117%), 500일 창에서는 50%(+0.008%).
+            창이 짧을수록 인공물이 커진다. 워크포워드의 3개월 검증창이
+            정확히 이 구간이었고, 그래서 12/12 폴드 양수가 나왔던 것이다.
+
+            비교·설명 목적으로만 남겨 둔다. 판정에는 쓰지 말 것.
+        """
+        if self.baseline == "time_series":
+            sums = np.bincount(code_idx, weights=ret, minlength=self.n_codes)
+            counts = np.bincount(code_idx, minlength=self.n_codes)
+            return ret - (sums / np.maximum(counts, 1))[code_idx]
+        if self.baseline != "cross_sectional":
+            raise ValueError(f"알 수 없는 baseline '{self.baseline}'. "
+                             "'cross_sectional' 또는 'time_series'.")
+        _, inverse = np.unique(day, return_inverse=True)
+        sums = np.bincount(inverse, weights=ret)
+        counts = np.bincount(inverse)
+        return ret - (sums / counts)[inverse]
 
     # --- 조합 평가 -------------------------------------------------------
     def mask(self, combo: Combo) -> np.ndarray:

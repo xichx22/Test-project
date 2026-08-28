@@ -20,7 +20,7 @@ from . import signals as sig
 from .datasource import CsvDataSource, Interval, get_source
 from .datasource.toss import TossClient
 from .evaluation.report import (
-    ReportConfig, write, write_combination, write_universe, write_walkforward,
+    ReportConfig, write, write_combination, write_factor, write_universe, write_walkforward,
 )
 from .evaluation.trades import CostModel, ExitPolicy
 
@@ -221,6 +221,21 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_factor(args: argparse.Namespace) -> int:
+    data, interval = _load_universe(args)
+    if not data:
+        print("수집된 종목이 없습니다.", file=sys.stderr)
+        return 1
+    out = args.out or f"reports/factor_{interval.value}.md"
+    path = write_factor(
+        data, out, interval=interval,
+        horizons=tuple(int(h) for h in args.horizons.split(",")),
+        n_buckets=args.buckets, control=args.control,
+    )
+    print(f"{len(data)}종목 팩터 리포트 생성 → {path}")
+    return 0
+
+
 def cmd_probe_toss(args: argparse.Namespace) -> int:
     """브라우저에서 복사한 요청으로 토스 캔들 엔드포인트를 확정한다."""
     from .datasource.toss import TossApiError, TossClient, parse_candles, save_session
@@ -374,6 +389,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--top-k", type=int, default=20)
     p.add_argument("--min-events", type=int, default=120)
     p.set_defaults(func=cmd_walkforward)
+
+    p = sub.add_parser("factor", help="횡단면 팩터 분석 (겹침·베타 보정 포함)")
+    p.add_argument("--source", default="csv", choices=["naver", "csv", "synthetic"])
+    p.add_argument("--root", default="data")
+    p.add_argument("--codes", default=None)
+    p.add_argument("--interval", default="1d", choices=[i.value for i in Interval])
+    p.add_argument("--count", type=int, default=1200)
+    p.add_argument("--out", default=None)
+    p.add_argument("--horizons", default="5,20")
+    p.add_argument("--buckets", type=int, default=10)
+    p.add_argument("--control", default="ret_120")
+    p.set_defaults(func=cmd_factor)
 
     p = sub.add_parser("probe-toss", help="브라우저 요청으로 토스 캔들 엔드포인트 확정")
     p.add_argument("--curl", default=None,

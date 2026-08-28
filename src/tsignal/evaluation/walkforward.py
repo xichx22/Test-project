@@ -143,6 +143,7 @@ def run(
     max_filters: int = 2,
     min_events: int = 100,
     min_test_events: int = 30,
+    baseline: str = "cross_sectional",
     panels: Sequence[SymbolPanel] | None = None,
     panel_columns: tuple[list[str], list[str]] | None = None,
 ) -> WalkForwardResult:
@@ -176,11 +177,11 @@ def run(
     for fold in folds:
         train = CombinationLab.from_panels(
             panels, (trig_cols, filt_cols), horizon=horizon,
-            start=fold.train_start, end=fold.train_end,
+            start=fold.train_start, end=fold.train_end, baseline=baseline,
         )
         test = CombinationLab.from_panels(
             panels, (trig_cols, filt_cols), horizon=horizon,
-            start=fold.test_start, end=fold.test_end,
+            start=fold.test_start, end=fold.test_end, baseline=baseline,
         )
 
         selection = select_and_validate(
@@ -233,5 +234,6 @@ def run(
         folds=folds, combo_by_fold=combo_by_fold, filter_by_fold=filter_by_fold,
         filter_summary=summary, scheme=scheme, horizon=horizon,
         meta={"n_codes": len(panels), "train_months": train_months,
-              "test_months": test_months, "span": (span_start, span_end)},
+              "test_months": test_months, "span": (span_start, span_end),
+              "baseline": baseline},
     )

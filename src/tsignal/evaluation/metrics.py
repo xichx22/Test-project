@@ -106,6 +106,45 @@ def clustered_t_stat(values: np.ndarray, cluster: np.ndarray) -> float:
     return float(means.mean() / (sd / np.sqrt(len(means))))
 
 
+def non_overlapping_t_stat(values: np.ndarray, horizon: int) -> float:
+    """겹치지 않는 표본으로 계산한 t.
+
+    왜 필요한가
+    -----------
+    보유 20일 전방수익률을 매일 계산하면, 인접한 날의 관측은 20일 중 19일을
+    공유한다. 독립 관측이 아닌데 독립으로 세면 t 가 대략 √h 배 부풀려진다.
+    날짜 군집 보정은 이걸 잡지 못한다 — 같은 날 안의 상관은 잡지만 날짜 사이의
+    겹침은 그대로 두기 때문이다.
+
+    실측(199종목·5년 일봉, 보유 20일 롱숏 스프레드):
+      ema60_gap : 겹침 t 6.12 → 비겹침 t 1.36
+      ret_120   : 겹침 t 8.62 → 비겹침 t 1.95
+      atrp_14   : 겹침 t 13.50 → 비겹침 t 3.03
+
+    방법
+    ----
+    h일 간격으로 뽑아 겹치지 않는 부분표본을 만든다. 시작점을 어디로 잡느냐에
+    따라 h개의 부분표본이 나오므로, 전부 계산해 평균을 낸다 (한 시작점만 쓰면
+    그 선택 자체가 또 하나의 자유도가 된다).
+    """
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if horizon < 1:
+        raise ValueError("horizon 은 1 이상이어야 합니다.")
+    if len(arr) < horizon * 3:
+        return np.nan
+
+    stats = []
+    for offset in range(horizon):
+        sub = arr[offset::horizon]
+        if len(sub) < 3:
+            continue
+        sd = sub.std(ddof=1)
+        if sd > 0:
+            stats.append(sub.mean() / (sd / np.sqrt(len(sub))))
+    return float(np.mean(stats)) if stats else np.nan
+
+
 def bootstrap_ci(r: pd.Series, *, n: int = 2000, alpha: float = 0.05, seed: int = 7) -> tuple[float, float]:
     """기대수익률의 부트스트랩 신뢰구간. 하한이 0 위면 신호가 살아남았다고 본다."""
     r = _clean(r).to_numpy()

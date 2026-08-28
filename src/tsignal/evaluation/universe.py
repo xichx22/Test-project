@@ -38,11 +38,20 @@ def signal_returns(
     per_signal: dict[str, list[pd.DataFrame]] = {}
     base_means: dict[str, float] = {}
 
+    # 기준선은 **같은 날짜의 전 종목 평균**이다. 종목별 창 안 평균을 쓰면
+    # 인공적인 평균회귀가 생긴다 (combine.CombinationLab._excess 참고).
+    daily = pd.concat([
+        forward_returns(candles, (horizon,), entry=entry)[f"fwd_{horizon}"].rename(code)
+        for code, candles in candles_by_code.items()
+    ], axis=1)
+    cross_sectional_mean = daily.mean(axis=1)
+
     for code, candles in candles_by_code.items():
         features = ind.compute_all(candles, interval=interval)
         entries = sig.evaluate_all(candles, features, kind="entry", exclude_tags=exclude_tags)
         fwd = forward_returns(candles, (horizon,), entry=entry)[f"fwd_{horizon}"]
         base_means[code] = float(fwd.mean())
+        market = cross_sectional_mean.reindex(fwd.index)
 
         for name in entries.columns:
             r = fwd[entries[name].astype(bool)].dropna()
@@ -53,7 +62,7 @@ def signal_returns(
                 # 신호를 검정할 때는 이쪽을 쓴다 — 아래 주석 참고.
                 pd.DataFrame({
                     "code": code, "ret": r.to_numpy(),
-                    "excess": r.to_numpy() - base_means[code],
+                    "excess": r.to_numpy() - market.reindex(r.index).to_numpy(),
                     # 날짜 군집 보정을 위해 발생 날짜를 함께 들고 간다.
                     "day": r.index.tz_localize(None).to_numpy().astype("datetime64[D]"),
                 })
@@ -79,7 +88,7 @@ def screen_universe(
       n_codes      : 신호가 한 번이라도 발생한 종목 수
       n            : 풀링 표본 수
       expectancy   : 풀링 기대수익률 (원시)
-      edge         : 무조건부(종목별 평균) 대비 초과분 = 검정 대상
+      edge         : 같은 날짜 전 종목 평균 대비 초과분 = 검정 대상
       t_raw        : 원시 수익률의 t — **판정에 쓰지 않는다**
       t_naive      : 초과수익의 t, 군집 보정 없음 — **판정에 쓰지 않는다**
       t_edge       : 초과수익의 **날짜 군집 보정** t — 판정 기준
