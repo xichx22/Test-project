@@ -122,3 +122,51 @@ def test_filter_contribution_reports_every_axis(lab):
 def test_combo_name_marks_the_bare_case():
     assert Combo("x", ()).name.endswith(BARE)
     assert Combo("x", ("a", "b")).name == "x + a & b"
+
+
+# =====================================================================
+# 날짜 군집 보정 — 이 프로젝트에서 가장 크게 결과를 바꾼 수정
+# =====================================================================
+
+def test_clustered_t_deflates_cross_sectionally_correlated_samples():
+    """같은 날 여러 종목에서 동시에 뜬 신호는 독립 관측이 아니다.
+
+    극단적인 예: 20개 종목이 완전히 같은 수익률을 갖는다면 실질 표본은 1개다.
+    순진한 t 는 √20 만큼 부풀지만 군집 보정 t 는 그렇지 않아야 한다.
+    """
+    from tsignal.evaluation.metrics import clustered_t_stat, t_stat
+    import pandas as pd
+
+    rng = np.random.default_rng(0)
+    day_effect = rng.normal(0.001, 0.02, 60)           # 날짜 60개
+    values = np.repeat(day_effect, 20)                 # 날짜당 20종목이 완전 동조
+    days = np.repeat(np.arange(60), 20)
+
+    naive = t_stat(pd.Series(values))
+    clustered = clustered_t_stat(values, days)
+    assert abs(naive) > abs(clustered) * 3, (naive, clustered)
+    # 완전 동조라면 실질 표본은 날짜 수뿐이다.
+    assert clustered == pytest.approx(t_stat(pd.Series(day_effect)), rel=1e-9)
+
+
+def test_clustered_t_matches_naive_when_one_observation_per_day():
+    from tsignal.evaluation.metrics import clustered_t_stat, t_stat
+    import pandas as pd
+
+    rng = np.random.default_rng(1)
+    values = rng.normal(0.002, 0.03, 200)
+    days = np.arange(200)
+    assert clustered_t_stat(values, days) == pytest.approx(t_stat(pd.Series(values)), rel=1e-9)
+
+
+def test_lab_reports_both_naive_and_clustered_t(lab):
+    row = lab.stats(Combo(lab.trigger_names[0], ()))
+    assert "t_edge" in row and "t_naive" in row and "n_days" in row
+    assert row["n_days"] <= row["n"]                   # 날짜 수는 표본 수를 넘을 수 없다
+
+
+def test_eligibility_requires_enough_distinct_days(lab):
+    """표본 수만 채우고 날짜가 적은 조합은 검정 대상에서 빠져야 한다."""
+    loose = lab.search(max_filters=1, min_events=30, min_days=1)
+    strict = lab.search(max_filters=1, min_events=30, min_days=200)
+    assert strict.attrs["n_trials"] < loose.attrs["n_trials"]

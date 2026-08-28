@@ -19,7 +19,9 @@ from . import indicators as ind
 from . import signals as sig
 from .datasource import CsvDataSource, Interval, get_source
 from .datasource.toss import TossClient
-from .evaluation.report import ReportConfig, write, write_combination, write_universe
+from .evaluation.report import (
+    ReportConfig, write, write_combination, write_universe, write_walkforward,
+)
 from .evaluation.trades import CostModel, ExitPolicy
 
 
@@ -101,19 +103,7 @@ DEFAULT_UNIVERSE = {
 
 
 def cmd_universe(args: argparse.Namespace) -> int:
-    interval = Interval(args.interval)
-    codes = args.codes.split(",") if args.codes else list(DEFAULT_UNIVERSE)
-    kwargs = {"root": args.root} if args.source == "csv" else {}
-    source = get_source(args.source, **kwargs)
-
-    data, failed = {}, []
-    for code in codes:
-        try:
-            data[code] = source.candles(code, interval, count=args.count)
-        except Exception as exc:                       # noqa: BLE001 — 한 종목 실패로 전체를 멈추지 않는다
-            failed.append(f"{code}: {type(exc).__name__} {str(exc)[:60]}")
-    if failed:
-        print("수집 실패:\n  " + "\n  ".join(failed), file=sys.stderr)
+    data, interval = _load_universe(args)
     if not data:
         print("수집된 종목이 없습니다.", file=sys.stderr)
         return 1
@@ -124,26 +114,14 @@ def cmd_universe(args: argparse.Namespace) -> int:
         data, out, interval=interval, exclude_tags=exclude,
         train_ratio=args.train_ratio, min_events=args.min_events,
         costs=CostModel(fee_bps=args.fee_bps, tax_bps=args.tax_bps, slippage_bps=args.slippage_bps),
-        names=DEFAULT_UNIVERSE,
+        names=_universe_names(args.root),
     )
     print(f"{len(data)}종목 리포트 생성 → {path}")
     return 0
 
 
 def cmd_combine(args: argparse.Namespace) -> int:
-    interval = Interval(args.interval)
-    codes = args.codes.split(",") if args.codes else list(DEFAULT_UNIVERSE)
-    kwargs = {"root": args.root} if args.source == "csv" else {}
-    source = get_source(args.source, **kwargs)
-
-    data, failed = {}, []
-    for code in codes:
-        try:
-            data[code] = source.candles(code, interval, count=args.count)
-        except Exception as exc:                       # noqa: BLE001
-            failed.append(f"{code}: {type(exc).__name__} {str(exc)[:60]}")
-    if failed:
-        print("수집 실패:\n  " + "\n  ".join(failed), file=sys.stderr)
+    data, interval = _load_universe(args)
     if not data:
         print("수집된 종목이 없습니다.", file=sys.stderr)
         return 1
@@ -157,6 +135,89 @@ def cmd_combine(args: argparse.Namespace) -> int:
         min_events=args.min_events, top_k=args.top_k, names=DEFAULT_UNIVERSE,
     )
     print(f"{len(data)}종목 조합 탐색 리포트 생성 → {path}")
+    return 0
+
+
+def _universe_names(root: str) -> dict[str, str]:
+    """data/universe.csv 가 있으면 종목명을 읽는다. 없으면 기본 목록."""
+    path = Path(root) / "universe.csv"
+    if not path.exists():
+        return dict(DEFAULT_UNIVERSE)
+    frame = pd.read_csv(path, dtype={"code": str})
+    return dict(zip(frame["code"], frame["name"]))
+
+
+def _load_universe(args: argparse.Namespace) -> tuple[dict, Interval]:
+    interval = Interval(args.interval)
+    kwargs = {"root": args.root} if args.source == "csv" else {}
+    source = get_source(args.source, **kwargs)
+
+    if args.codes:
+        codes = args.codes.split(",")
+    elif args.source == "csv":
+        codes = [s.code for s in source.symbols(interval)]
+    else:
+        codes = list(DEFAULT_UNIVERSE)
+
+    data, failed = {}, []
+    for code in codes:
+        try:
+            data[code] = source.candles(code, interval, count=args.count)
+        except Exception as exc:                       # noqa: BLE001
+            failed.append(f"{code}: {type(exc).__name__} {str(exc)[:60]}")
+    if failed:
+        print(f"수집 실패 {len(failed)}건: {failed[0]} ...", file=sys.stderr)
+    return data, interval
+
+
+def cmd_fetch_universe(args: argparse.Namespace) -> int:
+    """시총 상위 종목 목록을 받아 캔들을 통째로 저장한다."""
+    from .datasource.universe_list import fetch_universe, to_frame
+
+    symbols = fetch_universe(kospi=args.kospi, kosdaq=args.kosdaq)
+    frame = to_frame(symbols)
+    root = Path(args.root)
+    root.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(root / "universe.csv", index=False)
+    print(f"유니버스 {len(frame)}종목 → {root / 'universe.csv'}")
+
+    interval = Interval(args.interval)
+    source, sink = get_source("naver"), CsvDataSource(args.root)
+    saved, short, failed = 0, [], []
+    for symbol in symbols:
+        try:
+            candles = source.candles(symbol.code, interval, count=args.count)
+        except Exception as exc:                       # noqa: BLE001
+            failed.append(f"{symbol.code} {symbol.name}: {type(exc).__name__}")
+            continue
+        if len(candles) < args.min_bars:
+            short.append(f"{symbol.code} {symbol.name}({len(candles)}봉)")
+            continue
+        sink.save(candles, symbol.code, interval)
+        saved += 1
+    print(f"저장 {saved}종목 / 봉부족 {len(short)} / 실패 {len(failed)}")
+    if short:
+        print(f"  봉부족: {', '.join(short[:5])}")
+    if failed:
+        print(f"  실패: {', '.join(failed[:5])}", file=sys.stderr)
+    return 0 if saved else 1
+
+
+def cmd_walkforward(args: argparse.Namespace) -> int:
+    data, interval = _load_universe(args)
+    if not data:
+        print("수집된 종목이 없습니다.", file=sys.stderr)
+        return 1
+    out = args.out or f"reports/walkforward_{interval.value}.md"
+    path = write_walkforward(
+        data, out, interval=interval,
+        horizons=tuple(int(h) for h in args.horizons.split(",")),
+        exclude_tags=("session",) if interval is Interval.D1 else (),
+        train_months=args.train_months, test_months=args.test_months,
+        step_months=args.step_months, scheme=args.scheme,
+        top_k=args.top_k, min_events=args.min_events,
+    )
+    print(f"{len(data)}종목 워크포워드 리포트 생성 → {path}")
     return 0
 
 
@@ -233,6 +294,31 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--min-events", type=int, default=80)
     p.add_argument("--top-k", type=int, default=20)
     p.set_defaults(func=cmd_combine)
+
+    p = sub.add_parser("fetch-universe", help="시총 상위 종목 목록 + 캔들 일괄 수집")
+    p.add_argument("--root", default="data")
+    p.add_argument("--interval", default="1d", choices=[i.value for i in Interval])
+    p.add_argument("--kospi", type=int, default=150)
+    p.add_argument("--kosdaq", type=int, default=50)
+    p.add_argument("--count", type=int, default=1200)
+    p.add_argument("--min-bars", type=int, default=400)
+    p.set_defaults(func=cmd_fetch_universe)
+
+    p = sub.add_parser("walkforward", help="롤링 워크포워드 (분할을 여러 번)")
+    p.add_argument("--source", default="csv", choices=["naver", "csv", "synthetic"])
+    p.add_argument("--root", default="data")
+    p.add_argument("--codes", default=None)
+    p.add_argument("--interval", default="1d", choices=[i.value for i in Interval])
+    p.add_argument("--count", type=int, default=1200)
+    p.add_argument("--out", default=None)
+    p.add_argument("--horizons", default="3,5,10")
+    p.add_argument("--train-months", type=int, default=24)
+    p.add_argument("--test-months", type=int, default=3)
+    p.add_argument("--step-months", type=int, default=None)
+    p.add_argument("--scheme", default="rolling", choices=["rolling", "anchored"])
+    p.add_argument("--top-k", type=int, default=20)
+    p.add_argument("--min-events", type=int, default=120)
+    p.set_defaults(func=cmd_walkforward)
 
     p = sub.add_parser("probe-toss", help="토스 캔들 엔드포인트 파라미터 재탐색")
     p.add_argument("--code", default="005930")

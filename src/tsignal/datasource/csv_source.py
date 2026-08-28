@@ -54,6 +54,18 @@ class CsvDataSource(DataSource):
         df.to_csv(path, index_label="dt")
         return path
 
-    def symbols(self) -> list[Symbol]:
-        codes = {p.stem for p in self.root.rglob("*.csv")}
+    def symbols(self, interval: Interval | None = None) -> list[Symbol]:
+        """저장된 종목 목록.
+
+        interval 을 주면 그 타임프레임 디렉터리만 본다. 루트를 통째로 훑으면
+        `data/universe.csv` 같은 메타 파일까지 종목으로 오인한다.
+        """
+        roots = [self.root / interval.value] if interval else [
+            self.root / iv.value for iv in Interval
+        ]
+        codes = {p.stem for root in roots if root.is_dir() for p in root.glob("*.csv")}
         return [Symbol(code=c) for c in sorted(codes)]
+
+    def load_all(self, interval: Interval) -> dict[str, pd.DataFrame]:
+        """그 타임프레임에 저장된 모든 종목을 한 번에 읽는다."""
+        return {s.code: self.candles(s.code, interval) for s in self.symbols(interval)}

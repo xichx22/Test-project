@@ -51,8 +51,12 @@ def signal_returns(
             per_signal.setdefault(name, []).append(
                 # excess = 그 종목의 같은 기간 무조건부 평균을 뺀 값.
                 # 신호를 검정할 때는 이쪽을 쓴다 — 아래 주석 참고.
-                pd.DataFrame({"code": code, "ret": r.to_numpy(),
-                              "excess": r.to_numpy() - base_means[code]})
+                pd.DataFrame({
+                    "code": code, "ret": r.to_numpy(),
+                    "excess": r.to_numpy() - base_means[code],
+                    # 날짜 군집 보정을 위해 발생 날짜를 함께 들고 간다.
+                    "day": r.index.tz_localize(None).to_numpy().astype("datetime64[D]"),
+                })
             )
 
     pooled = {name: pd.concat(parts, ignore_index=True) for name, parts in per_signal.items()}
@@ -77,7 +81,9 @@ def screen_universe(
       expectancy   : 풀링 기대수익률 (원시)
       edge         : 무조건부(종목별 평균) 대비 초과분 = 검정 대상
       t_raw        : 원시 수익률의 t — **판정에 쓰지 않는다**
-      t_edge       : 초과수익의 t — 판정 기준
+      t_naive      : 초과수익의 t, 군집 보정 없음 — **판정에 쓰지 않는다**
+      t_edge       : 초과수익의 **날짜 군집 보정** t — 판정 기준
+      n_days       : 신호가 발생한 날짜 수 = 유효 표본 수
       breadth      : 종목별 초과수익 평균이 양(+)인 비율
       t_by_code_med: 종목별 초과수익 t 의 중앙값
 
@@ -106,8 +112,12 @@ def screen_universe(
             "expectancy": float(frame["ret"].mean()),
             "edge": float(frame["excess"].mean()),
             "win_rate": metrics.win_rate(frame["ret"]),
+            # t_raw 는 보정 없는 값 — 얼마나 부풀려지는지 보여주기 위해서만 남긴다.
             "t_raw": metrics.t_stat(frame["ret"]),
-            "t_edge": metrics.t_stat(frame["excess"]),
+            "t_naive": metrics.t_stat(frame["excess"]),
+            # 판정은 날짜 군집 보정된 t 로만 한다.
+            "t_edge": metrics.clustered_t_stat(frame["excess"].to_numpy(), frame["day"].to_numpy()),
+            "n_days": int(frame["day"].nunique()),
             "breadth": float((code_means > 0).mean()),
             # 표본이 3개 미만인 종목은 t 가 정의되지 않는다 → 빼고 중앙값을 낸다.
             "t_by_code_med": float(code_t.dropna().median()) if code_t.notna().any() else np.nan,
@@ -125,7 +135,7 @@ def screen_universe(
 
 
 def _verdict(row: pd.Series, *, threshold: float, min_events: int) -> str:
-    if row["n"] < min_events:
+    if row["n"] < min_events or row.get("n_days", np.inf) < 40:
         return "표본부족"
     t = row["t_edge"]
     if not np.isfinite(t):
@@ -156,7 +166,7 @@ def split_universe(
         oos_parts[code] = candles.iloc[cut:]
 
     kwargs = dict(interval=interval, horizon=horizon, exclude_tags=exclude_tags, min_events=1)
-    cols = ["n", "edge", "t_edge", "breadth"]
+    cols = ["n", "n_days", "edge", "t_edge", "breadth"]
     left = screen_universe(is_parts, **kwargs)[cols]
     right = screen_universe(oos_parts, **kwargs)[cols]
     merged = left.add_suffix("_is").join(right.add_suffix("_oos"), how="outer")

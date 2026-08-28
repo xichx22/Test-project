@@ -468,3 +468,142 @@ def write_combination(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(build_combination(candles_by_code, **kwargs), encoding="utf-8")
     return target
+
+
+# =====================================================================
+# 워크포워드 리포트
+# =====================================================================
+
+def build_walkforward(
+    candles_by_code: dict[str, pd.DataFrame],
+    *,
+    interval: Interval,
+    horizons: tuple[int, ...] = (3, 5, 10),
+    exclude_tags: tuple[str, ...] = (),
+    train_months: int = 24,
+    test_months: int = 3,
+    step_months: int | None = None,
+    scheme: str = "rolling",
+    top_k: int = 20,
+    min_events: int = 120,
+    min_test_events: int = 25,
+    alpha: float = 0.05,
+) -> str:
+    """롤링 워크포워드 리포트."""
+    from .combine import build_panels
+    from .walkforward import run as run_wf
+
+    out: list[str] = []
+    add = out.append
+
+    add(f"# 롤링 워크포워드 리포트 — {len(candles_by_code)}종목 ({interval.value})\n")
+    add(f"- 생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    add(f"- 방식: {scheme} · 학습 {train_months}개월 / 검증 {test_months}개월 / "
+        f"{step_months or test_months}개월씩 이동\n")
+
+    add("## 0. 왜 분할을 여러 번 하는가\n")
+    add("IS/OOS 분할을 한 번만 하면 결론이 \"어느 날짜에 잘랐는가\"에 걸린다. "
+        "특히 변동성·레짐 필터는 두 구간의 시장 성격 차이를 그대로 반영해버린다. "
+        "창을 밀어가며 반복하고, **폴드를 넘어 방향이 유지되는지**를 본다.\n")
+
+    add("### 두 가지 중요한 보정\n")
+    add("**날짜 군집 보정.** 한국 주식 199개는 같은 날 같이 움직인다. 시장이 빠진 날에는 "
+        "수십~백 종목에서 같은 신호가 동시에 뜬다. 이걸 독립 관측으로 세면 표준오차가 "
+        "√n 만큼 작아져 t 가 부풀려진다. 실측 인플레이션은 최대 **10배**였다 "
+        "(`bollinger_lower_reclaim`: 순진한 t 5.93 → 보정 t 0.58, "
+        "`donchian_breakout`: 3.56 → −0.79 로 부호까지 반전). "
+        "유효 표본은 신호 발생 횟수가 아니라 **발생 날짜 수**다.\n")
+    add("**폴드 단위 집계.** 한 폴드 안의 조합 20개는 표본이 크게 겹쳐 독립이 아니다. "
+        "조합을 단위로 이항검정을 하면 p 가 가짜로 작아진다. 폴드별 생존률이 귀무값(16%)을 "
+        "넘는지만 세고, 폴드 사이에서 부호검정을 한다.\n")
+
+    threshold_p = 1 - (1 - alpha) ** (1 / len(__import__("tsignal.signals", fromlist=["filters"]).filters.REGISTRY))
+    add(f"> 필터를 동시에 검정하므로 보정된 p 문턱은 **{threshold_p:.4f}** 다. "
+        "폴드가 적으면 부호검정의 최소 p 가 이 문턱보다 커서 **어떤 결과도 통과할 수 없다** "
+        f"(폴드 6개면 최소 p=0.031). 이 리포트가 폴드를 {'' if test_months >= 6 else '짧은 검증창으로 '}"
+        "늘려 잡은 이유다.\n")
+
+    passed: dict[str, list[int]] = {}
+    harmful: dict[str, list[int]] = {}
+    for horizon in horizons:
+        panels, trig_cols, filt_cols = build_panels(
+            candles_by_code, interval=interval, horizon=horizon, exclude_tags=exclude_tags
+        )
+        result = run_wf(
+            panels=panels, panel_columns=(trig_cols, filt_cols), horizon=horizon,
+            train_months=train_months, test_months=test_months, step_months=step_months,
+            scheme=scheme, top_k=top_k, min_events=min_events, min_test_events=min_test_events,
+        )
+        stats = result.combo_stats
+        min_sign_p = 2 * 0.5 ** stats["n_folds"]
+
+        add(f"## 보유 {horizon}봉 — 폴드 {len(result.folds)}개\n")
+        add("### 조합 수준\n")
+        add(f"- {result.combo_verdict}")
+        add(f"- 참고(상관 무시한 집계): {stats['pooled_survived']}/{stats['pooled_selected']}건\n")
+        add(_md_table(result.combo_by_fold[["label", "n_selected", "n_survived", "survival_rate"]].round(3)))
+        add("")
+
+        add("### 필터 수준\n")
+        summary = result.filter_summary.copy()
+        # 부호검정은 방향을 가리지 않는다 — 12/12 양수도, 0/12 양수도 p 가 똑같이 작다.
+        # 후자는 "일관되게 해로운" 필터이므로 도움이 되는 필터와 반드시 구분해야 한다.
+        significant = summary["sign_p"] < threshold_p
+        summary["판정"] = np.where(
+            significant & (summary["consistency"] > 0.5), "도움(일관)",
+            np.where(significant & (summary["consistency"] < 0.5), "해로움(일관)", "-"),
+        )
+        for name in summary[summary["판정"] == "도움(일관)"].index:
+            passed.setdefault(name, []).append(horizon)
+        for name in summary[summary["판정"] == "해로움(일관)"].index:
+            harmful.setdefault(name, []).append(horizon)
+        cols = ["axis", "n_folds", "folds_positive", "consistency", "median_lift",
+                "mean_improve_rate", "sign_p", "판정"]
+        add(_md_table(summary[cols].round(4)))
+        add(f"\n부호검정 최소 가능 p = {min_sign_p:.5f} (폴드 {stats['n_folds']}개). "
+            f"보정 문턱 {threshold_p:.4f} {'보다 작으므로 통과 가능' if min_sign_p < threshold_p else '보다 크므로 통과 불가 — 검정력 부족'}.\n")
+
+    add("## 결론\n")
+    if passed:
+        add("### 일관되게 **도움이 된** 필터 (보정 문턱 통과 + 과반 폴드에서 양수)\n")
+        add("| 필터 | 통과한 보유기간 |")
+        add("| --- | --- |")
+        for name, hs in sorted(passed.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            add(f"| `{name}` | {', '.join(f'{h}봉' for h in hs)} ({len(hs)}/{len(horizons)}) |")
+        add("")
+        add("이것이 이 프로젝트에서 **다중검정 보정과 롤링 워크포워드를 모두 통과한 "
+            "최초의 결과**다. 다만 필터는 매매 신호가 아니라 조건이다. "
+            "실제 채택 전에 거래 시뮬로 비용 차감 후 성적을 확인해야 한다.\n")
+    else:
+        add("일관되게 도움이 된 필터가 없다.\n")
+
+    if harmful:
+        add("### 일관되게 **해로웠던** 필터\n")
+        add("부호검정은 방향을 가리지 않는다 — 모든 폴드에서 양수인 것과 모든 폴드에서 "
+            "음수인 것의 p 는 똑같이 작다. 아래는 후자다. 그 자체로도 정보다: "
+            "이 조건을 거는 대신 **반대 조건**을 거는 편이 나았다는 뜻이다.\n")
+        add("| 필터 | 해로웠던 보유기간 |")
+        add("| --- | --- |")
+        for name, hs in sorted(harmful.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            add(f"| `{name}` | {', '.join(f'{h}봉' for h in hs)} ({len(hs)}/{len(horizons)}) |")
+        add("")
+
+    add("## 한계\n")
+    add("- 폴드들은 학습창을 겹쳐 쓴다. 검증창은 겹치지 않지만 완전히 독립은 아니다.")
+    add("- 이 기간(약 5년)이 특정 레짐일 수 있다. 다른 시장 국면에서 재확인이 필요하다.")
+    add("- 현재 상장 종목만 담겨 **생존 편향**이 남아 있다. 유니버스를 넓혀도 "
+        "상장폐지 종목이 없으면 이 편향은 사라지지 않는다.")
+    add("- 초과수익(edge) 기준이며 매매비용 차감 전이다. 보유가 짧을수록 비용 "
+        "비중이 커진다 — 왕복 28bp 는 3봉 보유 lift 를 대부분 상쇄한다.")
+    add("- 이 리포트는 매매 권유가 아니다.\n")
+
+    return "\n".join(out)
+
+
+def write_walkforward(
+    candles_by_code: dict[str, pd.DataFrame], path: str | Path, **kwargs
+) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(build_walkforward(candles_by_code, **kwargs), encoding="utf-8")
+    return target

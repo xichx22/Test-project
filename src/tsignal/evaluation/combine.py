@@ -29,7 +29,7 @@ from .. import indicators as ind
 from .. import signals as sig
 from ..datasource.base import Interval
 from ..signals import filters as filt
-from . import validation
+from . import metrics, validation
 from .forward import forward_returns
 
 # 필터 없는 조합을 나타내는 표기
@@ -46,6 +46,60 @@ class Combo:
         return f"{self.trigger} + {' & '.join(self.filters)}" if self.filters else f"{self.trigger} + {BARE}"
 
 
+@dataclass
+class SymbolPanel:
+    """한 종목의 트리거·필터·전방수익률을 미리 계산해 담아 둔 판.
+
+    워크포워드는 구간을 옮겨가며 같은 계산을 반복한다. 지표를 폴드마다 다시
+    계산하면 199종목 × 6폴드 = 몇 분씩 걸린다. 종목당 한 번만 계산해 두고
+    구간을 잘라 쓰면 초 단위로 끝난다.
+
+    구간을 잘라 써도 미래참조가 생기지 않는다 — 지표는 인과적이라 t 시점 값이
+    t 이전 정보만 쓰기 때문이다. 오히려 창 시작 이전의 이력까지 반영되므로
+    실제 트레이더가 보는 값에 더 가깝다 (워밍업 구간 왜곡이 없다).
+    """
+
+    code: str
+    index: pd.DatetimeIndex
+    trig: np.ndarray          # (N, T) bool
+    filt: np.ndarray          # (N, F) bool
+    fwd: np.ndarray           # (N,) float — NaN 포함
+    day: np.ndarray           # (N,) int64 — 에폭 기준 일수. 날짜 군집 보정에 쓴다
+
+
+def build_panels(
+    candles_by_code: Mapping[str, pd.DataFrame],
+    *,
+    interval: Interval,
+    horizon: int = 5,
+    entry: str = "next_open",
+    exclude_tags: tuple[str, ...] = (),
+    trigger_names: Sequence[str] | None = None,
+    filter_names: Sequence[str] | None = None,
+) -> tuple[list[SymbolPanel], list[str], list[str]]:
+    """종목별 판을 한 번에 만든다. 반환 (panels, trigger_names, filter_names)."""
+    panels: list[SymbolPanel] = []
+    trig_cols: list[str] = []
+    filt_cols: list[str] = []
+
+    for code, candles in candles_by_code.items():
+        features = ind.compute_all(candles, interval=interval)
+        triggers = sig.evaluate_all(
+            candles, features, kind="entry", names=trigger_names, exclude_tags=exclude_tags
+        )
+        states = filt.evaluate_all(candles, features, names=filter_names)
+        fwd = forward_returns(candles, (horizon,), entry=entry)[f"fwd_{horizon}"]
+
+        trig_cols, filt_cols = list(triggers.columns), list(states.columns)
+        panels.append(SymbolPanel(
+            code=code, index=candles.index,
+            trig=triggers.to_numpy(bool), filt=states.to_numpy(bool),
+            fwd=fwd.to_numpy(float),
+            day=candles.index.tz_localize(None).to_numpy().astype("datetime64[D]").astype(np.int64),
+        ))
+    return panels, trig_cols, filt_cols
+
+
 class CombinationLab:
     """유니버스 전체를 하나의 평평한 배열로 눌러 담아 조합을 빠르게 평가한다.
 
@@ -55,58 +109,96 @@ class CombinationLab:
 
     def __init__(
         self,
-        candles_by_code: Mapping[str, pd.DataFrame],
+        candles_by_code: Mapping[str, pd.DataFrame] | None = None,
         *,
-        interval: Interval,
+        interval: Interval | None = None,
         horizon: int = 5,
         entry: str = "next_open",
         exclude_tags: tuple[str, ...] = (),
         trigger_names: Sequence[str] | None = None,
         filter_names: Sequence[str] | None = None,
+        panels: Sequence[SymbolPanel] | None = None,
+        panel_columns: tuple[list[str], list[str]] | None = None,
+        start: pd.Timestamp | None = None,
+        end: pd.Timestamp | None = None,
     ) -> None:
-        self.interval = interval
         self.horizon = horizon
+        self.interval = interval
 
-        trig_parts, filt_parts, ret_parts, exc_parts, code_parts = [], [], [], [], []
+        if panels is None:
+            if candles_by_code is None or interval is None:
+                raise ValueError("candles_by_code 와 interval, 또는 panels 가 필요합니다.")
+            panels, trig_cols, filt_cols = build_panels(
+                candles_by_code, interval=interval, horizon=horizon, entry=entry,
+                exclude_tags=exclude_tags, trigger_names=trigger_names, filter_names=filter_names,
+            )
+        else:
+            if panel_columns is None:
+                raise ValueError("panels 를 넘길 때는 panel_columns 도 함께 넘겨야 합니다.")
+            trig_cols, filt_cols = panel_columns
+
+        self.trigger_names, self.filter_names = trig_cols, filt_cols
+        self._assemble(panels, start, end)
+
+        self._trig_col = {n: i for i, n in enumerate(self.trigger_names)}
+        self._filt_col = {n: i for i, n in enumerate(self.filter_names)}
+        self._axis_of = {name: spec.axis for name, spec in filt.REGISTRY.items()}
+
+    @classmethod
+    def from_panels(
+        cls,
+        panels: Sequence[SymbolPanel],
+        panel_columns: tuple[list[str], list[str]],
+        *,
+        horizon: int = 5,
+        start: pd.Timestamp | None = None,
+        end: pd.Timestamp | None = None,
+    ) -> "CombinationLab":
+        """미리 만든 판에서 특정 기간만 잘라 Lab 을 만든다 (워크포워드용)."""
+        return cls(panels=panels, panel_columns=panel_columns, horizon=horizon,
+                   start=start, end=end)
+
+    def _assemble(
+        self, panels: Sequence[SymbolPanel],
+        start: pd.Timestamp | None, end: pd.Timestamp | None,
+    ) -> None:
+        trig_parts, filt_parts, ret_parts, exc_parts, code_parts, day_parts = [], [], [], [], [], []
         self.codes: list[str] = []
 
-        for code, candles in candles_by_code.items():
-            features = ind.compute_all(candles, interval=interval)
-            triggers = sig.evaluate_all(
-                candles, features, kind="entry", names=trigger_names, exclude_tags=exclude_tags
-            )
-            states = filt.evaluate_all(candles, features, names=filter_names)
-            fwd = forward_returns(candles, (horizon,), entry=entry)[f"fwd_{horizon}"]
-
-            valid = fwd.notna().to_numpy()
-            if not valid.any():
+        for panel in panels:
+            window = np.ones(len(panel.index), dtype=bool)
+            if start is not None:
+                window &= panel.index >= start
+            if end is not None:
+                window &= panel.index <= end
+            keep = window & np.isfinite(panel.fwd)
+            if keep.sum() < 2:
                 continue
+
+            fwd = panel.fwd[keep]
+            # 기준선은 **그 창 안에서** 계산해야 한다. 전체 기간 평균을 쓰면
+            # 창 밖의 정보가 초과수익에 섞여 들어간다.
             baseline = float(fwd.mean())
 
-            self.codes.append(code)
+            self.codes.append(panel.code)
             code_id = len(self.codes) - 1
-            trig_parts.append(triggers.to_numpy(bool)[valid])
-            filt_parts.append(states.to_numpy(bool)[valid])
-            ret_parts.append(fwd.to_numpy(float)[valid])
-            exc_parts.append(fwd.to_numpy(float)[valid] - baseline)
-            code_parts.append(np.full(int(valid.sum()), code_id, dtype=np.int32))
-
-            self.trigger_names = list(triggers.columns)
-            self.filter_names = list(states.columns)
+            trig_parts.append(panel.trig[keep])
+            filt_parts.append(panel.filt[keep])
+            ret_parts.append(fwd)
+            exc_parts.append(fwd - baseline)
+            code_parts.append(np.full(int(keep.sum()), code_id, dtype=np.int32))
+            day_parts.append(panel.day[keep])
 
         if not self.codes:
-            raise ValueError("유효한 종목이 없습니다.")
+            raise ValueError("해당 구간에 유효한 종목이 없습니다.")
 
         self.trig = np.concatenate(trig_parts)
         self.filt = np.concatenate(filt_parts)
         self.ret = np.concatenate(ret_parts)
         self.excess = np.concatenate(exc_parts)
         self.code_idx = np.concatenate(code_parts)
+        self.day = np.concatenate(day_parts)
         self.n_codes = len(self.codes)
-
-        self._trig_col = {n: i for i, n in enumerate(self.trigger_names)}
-        self._filt_col = {n: i for i, n in enumerate(self.filter_names)}
-        self._axis_of = {name: spec.axis for name, spec in filt.REGISTRY.items()}
 
     # --- 조합 평가 -------------------------------------------------------
     def mask(self, combo: Combo) -> np.ndarray:
@@ -123,10 +215,12 @@ class CombinationLab:
             "filters": " & ".join(combo.filters) or BARE, "n_filters": len(combo.filters), "n": n,
         }
         if n < 3:
-            row.update({k: np.nan for k in ("expectancy", "edge", "win_rate", "t_edge", "breadth", "n_codes")})
+            row.update({k: np.nan for k in
+                        ("expectancy", "edge", "win_rate", "t_edge", "t_naive",
+                         "breadth", "n_codes", "n_days")})
             return row
 
-        exc, ret = self.excess[mask], self.ret[mask]
+        exc, ret, days = self.excess[mask], self.ret[mask], self.day[mask]
         std = exc.std(ddof=1)
         counts = np.bincount(self.code_idx[mask], minlength=self.n_codes)
         sums = np.bincount(self.code_idx[mask], weights=exc, minlength=self.n_codes)
@@ -137,9 +231,13 @@ class CombinationLab:
             "expectancy": float(ret.mean()),
             "edge": float(exc.mean()),
             "win_rate": float((ret > 0).mean()),
-            "t_edge": float(exc.mean() / (std / np.sqrt(n))) if std > 0 else np.nan,
+            # t_edge 는 날짜 군집 보정값이다. 판정은 이것으로만 한다.
+            # t_naive 는 보정하지 않았을 때 얼마나 부풀려지는지 보여주기 위해 남긴다.
+            "t_edge": metrics.clustered_t_stat(exc, days),
+            "t_naive": float(exc.mean() / (std / np.sqrt(n))) if std > 0 else np.nan,
             "breadth": float((code_means > 0).mean()),
             "n_codes": int(seen.sum()),
+            "n_days": int(len(np.unique(days))),
         })
         return row
 
@@ -179,6 +277,7 @@ class CombinationLab:
         *,
         max_filters: int = 2,
         min_events: int = 100,
+        min_days: int = 60,
         alpha: float = 0.05,
         fdr_alpha: float = 0.10,
         combos: Iterable[Combo] | None = None,
@@ -200,7 +299,9 @@ class CombinationLab:
         table["edge_bare"] = table["trigger"].map(bare)
         table["lift"] = table["edge"] - table["edge_bare"]
 
-        eligible = table["n"] >= min_events
+        # 유효 표본은 신호 발생 횟수가 아니라 **발생한 날짜 수**다.
+        # 같은 날 100종목에서 떴어도 독립 관측 100개가 아니다.
+        eligible = (table["n"] >= min_events) & (table["n_days"] >= min_days)
         n_trials = int(eligible.sum())
         threshold = validation.deflated_threshold(max(1, n_trials), alpha)
 
@@ -214,7 +315,7 @@ class CombinationLab:
 
         table.attrs.update({
             "n_combos": len(table), "n_combos_raw": n_raw,
-            "n_trials": n_trials, "threshold": threshold,
+            "n_trials": n_trials, "threshold": threshold, "min_days": min_days,
             "alpha": alpha, "fdr_alpha": fdr_alpha, "min_events": min_events,
             "horizon": self.horizon, "n_codes": self.n_codes,
         })
@@ -261,7 +362,9 @@ def select_and_validate(
     top_k: int = 20,
     max_filters: int = 2,
     min_events: int = 100,
+    min_days: int = 60,
     min_oos_events: int = 30,
+    min_oos_days: int = 20,
 ) -> SelectionResult:
     """정직한 프로토콜: IS 성적으로만 고르고, 그 선택을 OOS 로 채점한다.
 
@@ -270,18 +373,20 @@ def select_and_validate(
     """
     # 중복 제거는 필수다. 같은 봉 집합을 두 번 세면 생존 수가 이중 계산돼
     # 이항검정 p값이 가짜로 낮아진다.
-    is_table = is_lab.search(max_filters=max_filters, min_events=min_events, dedupe=True)
-    picked = is_table[is_table["n"] >= min_events].head(top_k)
+    is_table = is_lab.search(max_filters=max_filters, min_events=min_events,
+                             min_days=min_days, dedupe=True)
+    picked = is_table[(is_table["n"] >= min_events) & (is_table["n_days"] >= min_days)].head(top_k)
 
     combos = [Combo(row["trigger"], tuple(f for f in str(row["filters"]).split(" & ") if f != BARE))
               for _, row in picked.iterrows()]
     oos_rows = pd.DataFrame([oos_lab.stats(c) for c in combos]).set_index("combo")
 
-    merged = picked[["n", "edge", "t_edge", "breadth", "lift"]].add_suffix("_is").join(
-        oos_rows[["n", "edge", "t_edge", "breadth"]].add_suffix("_oos")
+    merged = picked[["n", "n_days", "edge", "t_edge", "breadth", "lift"]].add_suffix("_is").join(
+        oos_rows[["n", "n_days", "edge", "t_edge", "breadth"]].add_suffix("_oos")
     )
     merged["survived"] = (
-        (merged["n_oos"] >= min_oos_events) & (merged["edge_oos"] > 0) & (merged["t_edge_oos"] > 1.0)
+        (merged["n_oos"] >= min_oos_events) & (merged["n_days_oos"] >= min_oos_days)
+        & (merged["edge_oos"] > 0) & (merged["t_edge_oos"] > 1.0)
     )
 
     n_selected = len(merged)

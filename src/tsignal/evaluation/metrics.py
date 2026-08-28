@@ -69,6 +69,43 @@ def t_stat(r: pd.Series) -> float:
     return float(r.mean() / (r.std(ddof=1) / np.sqrt(len(r))))
 
 
+def clustered_t_stat(values: np.ndarray, cluster: np.ndarray) -> float:
+    """군집(날짜) 보정 t 통계량.
+
+    왜 필요한가
+    -----------
+    한국 주식 199개는 같은 날 같이 움직인다. 시장이 빠진 날에는 수십~백 종목에서
+    `bollinger_lower_reclaim` 이 동시에 뜬다. 이걸 독립 관측 100개로 세면
+    표준오차가 √100 만큼 작아지고 t 가 그만큼 부풀려진다.
+
+    실측(199종목·5년 일봉)에서 이 인플레이션은 최대 **10배**였다.
+      bollinger_lower_reclaim : 순진한 t 5.93 → 군집 보정 t 0.58
+      donchian_breakout       : 순진한 t 3.56 → 군집 보정 t -0.79 (부호까지 뒤집힘)
+
+    방법
+    ----
+    같은 날짜의 관측을 먼저 평균 내어 날짜당 하나의 값으로 만들고, 날짜 사이에서
+    t 를 낸다 (Fama-MacBeth 방식). 유효 표본 수는 신호 발생 횟수가 아니라
+    **신호가 발생한 날짜 수**다.
+    """
+    vals = np.asarray(values, dtype=float)
+    keys = np.asarray(cluster)
+    if len(vals) < 2:
+        return np.nan
+
+    uniq, inverse = np.unique(keys, return_inverse=True)
+    counts = np.bincount(inverse, minlength=len(uniq))
+    sums = np.bincount(inverse, weights=vals, minlength=len(uniq))
+    means = sums / counts
+
+    if len(means) < 3:
+        return np.nan
+    sd = means.std(ddof=1)
+    if sd == 0:
+        return np.nan
+    return float(means.mean() / (sd / np.sqrt(len(means))))
+
+
 def bootstrap_ci(r: pd.Series, *, n: int = 2000, alpha: float = 0.05, seed: int = 7) -> tuple[float, float]:
     """기대수익률의 부트스트랩 신뢰구간. 하한이 0 위면 신호가 살아남았다고 본다."""
     r = _clean(r).to_numpy()
