@@ -157,10 +157,19 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 그래서 어댑터는 (1) 검증된 엔드포인트를 제공하고, (2) 헤더/쿠키 주입 구멍을 열어두고,
 (3) 파라미터 재탐색 도구를 함께 둔다:
 
+브라우저에서 차트 요청을 **우클릭 → Copy → Copy as cURL** 해서 파일로 저장한 뒤:
+
 ```bash
-# 브라우저 개발자도구 > Network 에서 c-chart 요청 헤더를 JSON 으로 저장 후
-.venv/bin/python -m tsignal probe-toss --code 005930 --headers headers.json
+.venv/bin/python -m tsignal probe-toss --curl 저장한파일.txt
 ```
+
+경로·파라미터·헤더·쿠키를 분해하고, 요청을 재현해 200을 확인하고,
+파라미터를 하나씩 빼보며 필수 항목만 추린 뒤, 응답을 캔들로 파싱해 본다.
+확인되면 `toss.session.json` 으로 저장되어 이후 수집에 그대로 쓰인다.
+
+> SPA 번들에서 파라미터를 직접 찾아보려 했으나 실패했다 — 청크 39개(1.3MB)에
+> `c-chart` 관련 코드가 없고, 이 IP 에는 내용 없는 껍데기 페이지만 내려온다.
+> 브라우저 없이는 확정할 수 없다.
 
 자세한 내용은 [`docs/toss-api.md`](docs/toss-api.md).
 

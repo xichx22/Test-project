@@ -73,22 +73,57 @@ GET /api/v1/c-chart/kr-stock/A005930/{period}
 IP 에서는 `tossinvest.com` 의 페이지 라우트가 404를 반환해 청크 다운로드까지
 가지 못했다.
 
-## 3. 재탐색 방법
+## 3. SPA 번들에서 찾아보기 — 실패
 
-브라우저에서 토스증권 차트를 연 뒤, 개발자도구 → Network → `c-chart` 요청의
-**Request Headers 를 JSON 파일로 저장**하고:
+파라미터 이름을 코드에서 직접 확인하려고 `tossinvest.com/stocks/A005930` 의
+Next.js 청크 39개(1.3MB)를 받아 뒤졌으나, `c-chart`·`candle`·`wts-info-api`
+어느 것도 나오지 않았다. 페이지 자체에 종목명(`삼성전자`)도 `<title>` 도 없다 —
+서버가 이 IP 에 **내용 없는 껍데기**를 내려주고 있고, 차트 코드는 동적 임포트라
+초기 HTML 의 청크 목록에도 없다.
+
+즉 **브라우저 없이는 확정할 수 없다.** 아래 절차가 유일한 경로다.
+
+## 4. 확정 절차 — "Copy as cURL"
+
+헤더를 손으로 옮겨 적을 필요 없다. 브라우저가 보내는 요청을 통째로 복사하면 된다.
+
+1. 브라우저에서 <https://tossinvest.com/stocks/A005930> 을 열고 **차트** 탭으로 간다
+2. **F12** → **Network** 탭 → 필터 입력창에 `c-chart` 입력
+3. 차트의 **기간 버튼(1일/1주/1개월 등)을 눌러** 요청이 새로 뜨게 한다
+4. 목록에 뜬 요청을 **우클릭 → Copy → Copy as cURL**
+5. 아무 파일에나 붙여넣어 저장하고:
 
 ```bash
-python -m tsignal probe-toss --code 005930 --headers headers.json
+python -m tsignal probe-toss --curl 저장한파일.txt
 ```
 
-`TossClient.probe_candle_endpoint()` 가 period × 파라미터 조합을 훑어
-200을 주는 조합을 찾아 출력한다. 찾으면 고칠 곳은 두 군데뿐이다.
+도구가 하는 일:
+
+- cURL 을 파싱해 **경로·쿼리 파라미터·헤더·쿠키**를 분해해 보여준다
+  (Chrome/Firefox/Safari, Windows cmd 줄바꿈까지 처리)
+- 그 요청을 **그대로 재현**해 200 이 나오는지 확인한다
+- 파라미터를 **하나씩 빼보며 진짜 필수인 것만** 추린다
+  (브라우저는 쓰지도 않는 파라미터를 딸려 보내는 경우가 많다)
+- 응답을 캔들로 파싱해 봉 수와 기간을 출력한다
+- 확인된 헤더/쿠키/엔드포인트를 `toss.session.json` 으로 저장한다
+
+이후 수집은 저장된 세션으로 한다:
+
+```python
+TossDataSource(session_file="toss.session.json")
+```
+
+확정되면 고칠 곳은 두 군데뿐이다.
 
 1. `toss.py` 의 `_PERIOD_TOKEN` — 기간 토큰 매핑
-2. `toss.py` 의 `parse_candles()` — 응답 키 매핑 (이미 흔한 키 이름들을 폭넓게 받는다)
+2. `toss.py` 의 `parse_candles()` — 응답 키 매핑 (이미 흔한 키 이름을 폭넓게 받는다)
 
-## 4. 대안 데이터 소스
+### 주의 — 쿠키
+
+복사한 cURL 에는 **로그인 세션 쿠키가 들어 있을 수 있다.** 남에게 공유하지 말 것.
+`toss.session.json` 은 `.gitignore` 에 등록돼 있어 커밋되지 않는다.
+
+## 5. 대안 데이터 소스
 
 | 소스 | 분봉 | 인증 | 비고 |
 | --- | --- | --- | --- |
@@ -101,7 +136,7 @@ python -m tsignal probe-toss --code 005930 --headers headers.json
 토스는 실시간 스냅샷 보조로 쓰는 구성. 어댑터를 하나 더 쓰면 되고,
 지표·신호·검증 코드는 한 줄도 바뀌지 않는다.
 
-## 5. 주의
+## 6. 주의
 
 - 비공식 엔드포인트다. 서비스 약관과 `robots.txt` 를 확인하고 본인 책임으로 사용할 것.
 - `TossClient(min_interval_sec=...)` 로 호출 간격을 두고 있다. 낮추지 말 것.

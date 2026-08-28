@@ -222,7 +222,65 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
 
 
 def cmd_probe_toss(args: argparse.Namespace) -> int:
-    headers = json.loads(Path(args.headers).read_text()) if args.headers else None
+    """브라우저에서 복사한 요청으로 토스 캔들 엔드포인트를 확정한다."""
+    from .datasource.toss import TossApiError, TossClient, parse_candles, save_session
+    from .datasource.toss_curl import parse_curl_file, summarize
+
+    if not args.curl and not args.headers:
+        print(
+            "브라우저 요청이 필요합니다.\n"
+            "  1) tossinvest.com 에서 아무 종목의 차트를 엽니다\n"
+            "  2) 개발자도구(F12) → Network 탭 → 필터에 'c-chart' 입력\n"
+            "  3) 차트 기간을 바꿔 요청이 뜨게 한 뒤, 그 요청을 우클릭\n"
+            "     → Copy → Copy as cURL\n"
+            "  4) 파일로 저장하고: tsignal probe-toss --curl 저장한파일\n",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.curl:
+        request = parse_curl_file(args.curl)
+        print(summarize(request), end="\n\n")
+        client = TossClient(session_headers=request.headers, cookies=request.cookies)
+
+        status, body = client.replay(request)
+        print(f"재현 결과: HTTP {status}")
+        if status != 200:
+            print(f"  {body[:300]}")
+            print("\n요청이 재현되지 않았습니다. 쿠키가 만료됐을 수 있으니 "
+                  "브라우저에서 다시 복사해 보세요.", file=sys.stderr)
+            return 1
+
+        print(f"  응답 {len(body):,}바이트\n  {body[:300]}\n")
+
+        required = client.minimal_params(request)
+        print(f"필수 파라미터: {required or '(없음 — 전부 선택적)'}")
+        optional = sorted(set(request.params) - set(required))
+        print(f"생략 가능    : {optional or '(없음)'}\n")
+
+        try:
+            candles = parse_candles(json.loads(body))
+        except (TossApiError, ValueError) as exc:
+            print(f"캔들 파싱 실패: {exc}", file=sys.stderr)
+            print("→ toss.py 의 parse_candles() 키 매핑을 응답 구조에 맞게 넓히세요.",
+                  file=sys.stderr)
+            return 1
+
+        print(f"캔들 파싱 성공: {len(candles)}봉  "
+              f"{candles.index[0]:%Y-%m-%d %H:%M} ~ {candles.index[-1]:%Y-%m-%d %H:%M}")
+        print(candles.head(3).to_string())
+
+        path = save_session(
+            args.out, headers=request.headers, cookies=request.cookies,
+            endpoint={"path": request.path, "params": request.params, "required": required},
+        )
+        print(f"\n세션 저장 → {path}")
+        print("  (쿠키가 들어 있으니 커밋하지 마세요. .gitignore 에 등록돼 있습니다.)")
+        print(f"\n확인된 경로: {request.path}")
+        print("→ 이 경로의 기간 토큰을 toss.py 의 _PERIOD_TOKEN 에 반영하면 수집이 됩니다.")
+        return 0
+
+    headers = json.loads(Path(args.headers).read_text(encoding="utf-8"))
     client = TossClient(session_headers=headers)
     print(f"메타: {client.stock_info(args.code)['name']}")
     hits = 0
@@ -233,9 +291,6 @@ def cmd_probe_toss(args: argparse.Namespace) -> int:
             hits += 1
             print(f"     {row['body_head'][:200]}")
     print(f"\n200 응답 {hits}건.")
-    if not hits:
-        print("모두 실패했습니다. 브라우저 개발자도구 > Network 에서 c-chart 요청의 "
-              "요청 헤더를 JSON 파일로 저장한 뒤 --headers 로 넘겨보세요.")
     return 0 if hits else 1
 
 
@@ -320,9 +375,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--min-events", type=int, default=120)
     p.set_defaults(func=cmd_walkforward)
 
-    p = sub.add_parser("probe-toss", help="토스 캔들 엔드포인트 파라미터 재탐색")
+    p = sub.add_parser("probe-toss", help="브라우저 요청으로 토스 캔들 엔드포인트 확정")
+    p.add_argument("--curl", default=None,
+                   help="개발자도구에서 'Copy as cURL' 한 내용을 저장한 파일 (권장)")
+    p.add_argument("--headers", default=None, help="헤더만 담은 JSON 파일 (구식 경로)")
     p.add_argument("--code", default="005930")
-    p.add_argument("--headers", default=None, help="브라우저 요청 헤더 JSON 파일 경로")
+    p.add_argument("--out", default="toss.session.json", help="확인된 세션을 저장할 경로")
     p.set_defaults(func=cmd_probe_toss)
 
     args = parser.parse_args(argv)

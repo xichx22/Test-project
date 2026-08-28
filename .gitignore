@@ -8,3 +8,6 @@ data/
 reports/
 .pytest_cache/
 .DS_Store
+
+# 브라우저에서 복사한 토스 세션(쿠키 포함) — 절대 커밋하지 말 것
+*.session.json

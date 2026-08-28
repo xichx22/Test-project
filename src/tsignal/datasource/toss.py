@@ -29,8 +29,10 @@
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Iterable
 
 import pandas as pd
@@ -73,6 +75,29 @@ class TossCandlesUnavailable(TossApiError):
 
 def _to_a_code(code: str) -> str:
     return code if code.upper().startswith("A") else f"A{code}"
+
+
+def load_session(path: str | Path) -> dict[str, Any]:
+    """저장해 둔 세션(헤더/쿠키) 파일을 읽는다."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return {"session_headers": data.get("headers", {}), "cookies": data.get("cookies", {})}
+
+
+def save_session(path: str | Path, *, headers: dict[str, str], cookies: dict[str, str],
+                 endpoint: dict[str, Any] | None = None) -> Path:
+    """확인된 세션과 엔드포인트 정보를 파일로 남긴다.
+
+    쿠키에는 계정 세션 토큰이 들어갈 수 있다. 이 파일은 커밋하지 말 것
+    (`.gitignore` 에 `*.session.json` 이 등록돼 있다).
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps({"headers": headers, "cookies": cookies, "endpoint": endpoint or {}},
+                   ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return target
 
 
 class TossClient:
@@ -134,6 +159,35 @@ class TossClient:
     # --- 미확정 엔드포인트 -------------------------------------------------
     def raw_candles(self, code: str, period: str, **params: Any) -> Any:
         return self.get(f"/api/v1/c-chart/kr-stock/{_to_a_code(code)}/{period}", params)
+
+    def replay(self, request: Any) -> tuple[int, str]:
+        """cURL 에서 파싱한 요청을 그대로 재현한다."""
+        self._throttle()
+        resp = self._session.request(
+            request.method, request.base_url(), params=request.params,
+            headers=request.headers, cookies=request.cookies,
+            data=request.data, timeout=self.timeout,
+        )
+        return resp.status_code, resp.text
+
+    def minimal_params(self, request: Any) -> dict[str, Any]:
+        """파라미터를 하나씩 빼보며 정말 필요한 것만 추린다.
+
+        브라우저는 쓰지도 않는 파라미터를 딸려 보내는 경우가 많다.
+        무엇이 필수인지 알아야 어댑터를 안정적으로 짤 수 있다.
+        """
+        required: dict[str, Any] = {}
+        params = dict(request.params)
+        for key in list(params):
+            trimmed = {k: v for k, v in params.items() if k != key}
+            self._throttle()
+            resp = self._session.request(
+                request.method, request.base_url(), params=trimmed,
+                headers=request.headers, cookies=request.cookies, timeout=self.timeout,
+            )
+            if resp.status_code != 200:
+                required[key] = params[key]
+        return required
 
     def probe_candle_endpoint(
         self,
@@ -201,7 +255,16 @@ def parse_candles(payload: Any) -> pd.DataFrame:
 class TossDataSource(DataSource):
     name = "toss"
 
-    def __init__(self, client: TossClient | None = None, **client_kwargs: Any) -> None:
+    def __init__(
+        self,
+        client: TossClient | None = None,
+        *,
+        session_file: str | Path | None = None,
+        **client_kwargs: Any,
+    ) -> None:
+        """session_file 을 주면 `probe-toss --curl` 로 저장한 헤더/쿠키를 쓴다."""
+        if session_file is not None:
+            client_kwargs = {**load_session(session_file), **client_kwargs}
         self.client = client or TossClient(**client_kwargs)
 
     def symbol(self, code: str) -> Symbol:
