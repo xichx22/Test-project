@@ -217,3 +217,98 @@ def write(candles: pd.DataFrame, config: ReportConfig, path: str | Path) -> Path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(build(candles, config), encoding="utf-8")
     return target
+
+
+# =====================================================================
+# 유니버스 리포트 — 여러 종목을 묶어서 검증
+# =====================================================================
+
+def build_universe(
+    candles_by_code: dict[str, pd.DataFrame],
+    *,
+    interval: Interval,
+    horizons: tuple[int, ...] = (1, 3, 5, 10, 20),
+    exclude_tags: tuple[str, ...] = (),
+    train_ratio: float = 0.6,
+    min_events: int = 100,
+    alpha: float = 0.05,
+    costs: CostModel = CostModel(),
+    names: dict[str, str] | None = None,
+) -> str:
+    """유니버스 전체 검증 리포트."""
+    from .universe import screen_universe, split_universe
+
+    names = names or {}
+    spans = [(c, df.index[0], df.index[-1], len(df)) for c, df in candles_by_code.items()]
+    total_bars = sum(s[3] for s in spans)
+
+    out: list[str] = []
+    add = out.append
+
+    add(f"# 단타 신호 검증 리포트 — 유니버스 {len(candles_by_code)}종목 ({interval.value})\n")
+    add(f"- 생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    add(f"- 데이터: {min(s[1] for s in spans):%Y-%m-%d} ~ {max(s[2] for s in spans):%Y-%m-%d}, "
+        f"총 {total_bars:,}봉")
+    add(f"- 종목: {', '.join(names.get(c, c) for c in candles_by_code)}")
+    add(f"- 왕복 매매비용 {costs.round_trip_bps:.1f}bp\n")
+
+    add("## 0. 판정 기준\n")
+    add("**초과수익(edge)으로 검정한다.** 원시 수익률의 t(`t_raw`)로 판정하면 "
+        "보유기간을 늘릴수록 아무 신호나 유의해진다 — 시장이 우상향하면 "
+        "'아무 때나 사서 들고 있기'의 기대값이 양수이기 때문이다. "
+        "종목별 무조건부 평균을 뺀 `edge` 의 t(`t_edge`)만 신호의 기여분이다.\n")
+    add("| 판정 | 조건 |")
+    add("| --- | --- |")
+    add(f"| 채택후보 | 표본 {min_events}회 이상 · `t_edge` ≥ 보정 문턱 · breadth ≥ 0.6 |")
+    add("| 쏠림주의 | t는 넘었으나 소수 종목에 성과가 몰림 (breadth < 0.6) |")
+    add("| 보류 | t_edge > 1.0 |")
+    add("| 기각 | 그 외 |\n")
+
+    for horizon in horizons:
+        screen = screen_universe(
+            candles_by_code, interval=interval, horizon=horizon,
+            exclude_tags=exclude_tags, min_events=min_events, alpha=alpha,
+        )
+        threshold = screen.attrs["threshold"]
+        add(f"## 보유 {horizon}봉\n")
+        add(f"무조건부 기대값 {_pct(screen.attrs['baseline'])} · 보정 문턱 |t| ≥ {threshold:.2f} "
+            f"(신호 {len(screen)}개 동시 검정)\n")
+        cols = ["n_codes", "n", "expectancy", "edge", "win_rate", "t_raw", "t_edge", "breadth", "verdict"]
+        add(_md_table(screen[cols].head(12).round(4)))
+        counts = screen["verdict"].value_counts().to_dict()
+        add(f"\n판정 집계: {counts}\n")
+
+        gap = (screen["t_raw"] - screen["t_edge"]).abs().max()
+        if np.isfinite(gap) and gap > 1.0:
+            worst = (screen["t_raw"] - screen["t_edge"]).abs().idxmax()
+            add(f"> `t_raw` 와 `t_edge` 의 최대 격차 {gap:.2f} (`{worst}`). "
+                "이 격차가 곧 '시장이 벌어준 몫'이다.\n")
+
+    add("## OOS 재현 검증\n")
+    add(f"종목마다 앞 {train_ratio:.0%} 를 IS, 뒤 {1 - train_ratio:.0%} 를 OOS 로 잘라 "
+        "초과수익 t 를 각각 낸다. 부호가 뒤집히면 IS 결과는 우연이었다고 본다.\n")
+    split = split_universe(
+        candles_by_code, interval=interval, horizon=horizons[min(2, len(horizons) - 1)],
+        train_ratio=train_ratio, exclude_tags=exclude_tags,
+    )
+    add(_md_table(split.head(12).round(4)))
+    survivors = split[(split["t_edge_is"] > 1.5) & (split["t_edge_oos"] > 1.5) & split["sign_agree"]]
+    add(f"\nIS·OOS 모두 t_edge > 1.5 이고 부호가 일치하는 신호: "
+        f"{', '.join(survivors.index) if len(survivors) else '**없음**'}\n")
+
+    add("## 한계\n")
+    add(f"- 종목 {len(candles_by_code)}개는 유니버스로 작다. 코스피200 전체로 넓혀야 한다.")
+    add("- 현재 상장된 종목만 담겼다 — 상장폐지 종목이 빠진 **생존 편향**이 남아 있다.")
+    add("- 일봉 결과이므로 분봉 단타에 그대로 옮길 수 없다. 타임프레임이 바뀌면 다시 재야 한다.")
+    add("- 이 리포트는 매매 권유가 아니다.\n")
+
+    return "\n".join(out)
+
+
+def write_universe(
+    candles_by_code: dict[str, pd.DataFrame], path: str | Path, **kwargs
+) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(build_universe(candles_by_code, **kwargs), encoding="utf-8")
+    return target

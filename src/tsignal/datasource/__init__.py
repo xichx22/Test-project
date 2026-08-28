@@ -1,11 +1,12 @@
 from .base import DataSource, Interval, Symbol
 from .csv_source import CsvDataSource
+from .naver import NaverDataSource
 from .synthetic import SyntheticDataSource
 from .toss import TossClient, TossDataSource
 
 __all__ = [
     "DataSource", "Interval", "Symbol",
-    "CsvDataSource", "SyntheticDataSource", "TossClient", "TossDataSource",
+    "CsvDataSource", "NaverDataSource", "SyntheticDataSource", "TossClient", "TossDataSource",
 ]
 
 
@@ -13,6 +14,7 @@ def get_source(name: str, **kwargs) -> DataSource:
     table = {
         "toss": TossDataSource,
         "csv": CsvDataSource,
+        "naver": NaverDataSource,
         "synthetic": SyntheticDataSource,
     }
     if name not in table:

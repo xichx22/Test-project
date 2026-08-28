@@ -19,12 +19,12 @@ from . import indicators as ind
 from . import signals as sig
 from .datasource import CsvDataSource, Interval, get_source
 from .datasource.toss import TossClient
-from .evaluation.report import ReportConfig, write
+from .evaluation.report import ReportConfig, write, write_universe
 from .evaluation.trades import CostModel, ExitPolicy
 
 
 def _add_data_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--source", default="synthetic", choices=["toss", "csv", "synthetic"])
+    p.add_argument("--source", default="synthetic", choices=["naver", "toss", "csv", "synthetic"])
     p.add_argument("--root", default="data", help="csv 소스의 루트 디렉터리")
     p.add_argument("--code", default="005930")
     p.add_argument("--interval", default="5m", choices=[i.value for i in Interval])
@@ -85,6 +85,48 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+DEFAULT_UNIVERSE = {
+    "005930": "삼성전자", "000660": "SK하이닉스", "373220": "LG에너지솔루션",
+    "207940": "삼성바이오로직스", "005380": "현대차", "000270": "기아",
+    "068270": "셀트리온", "105560": "KB금융", "055550": "신한지주",
+    "035420": "NAVER", "035720": "카카오", "012330": "현대모비스",
+    "051910": "LG화학", "006400": "삼성SDI", "028260": "삼성물산",
+    "034730": "SK", "015760": "한국전력", "032830": "삼성생명",
+    "003670": "포스코퓨처엠", "086790": "하나금융지주", "247540": "에코프로비엠",
+    "066570": "LG전자", "010130": "고려아연", "009540": "HD한국조선해양",
+}
+
+
+def cmd_universe(args: argparse.Namespace) -> int:
+    interval = Interval(args.interval)
+    codes = args.codes.split(",") if args.codes else list(DEFAULT_UNIVERSE)
+    kwargs = {"root": args.root} if args.source == "csv" else {}
+    source = get_source(args.source, **kwargs)
+
+    data, failed = {}, []
+    for code in codes:
+        try:
+            data[code] = source.candles(code, interval, count=args.count)
+        except Exception as exc:                       # noqa: BLE001 — 한 종목 실패로 전체를 멈추지 않는다
+            failed.append(f"{code}: {type(exc).__name__} {str(exc)[:60]}")
+    if failed:
+        print("수집 실패:\n  " + "\n  ".join(failed), file=sys.stderr)
+    if not data:
+        print("수집된 종목이 없습니다.", file=sys.stderr)
+        return 1
+
+    out = args.out or f"reports/universe_{interval.value}.md"
+    exclude = ("session",) if interval is Interval.D1 else ()
+    path = write_universe(
+        data, out, interval=interval, exclude_tags=exclude,
+        train_ratio=args.train_ratio, min_events=args.min_events,
+        costs=CostModel(fee_bps=args.fee_bps, tax_bps=args.tax_bps, slippage_bps=args.slippage_bps),
+        names=DEFAULT_UNIVERSE,
+    )
+    print(f"{len(data)}종목 리포트 생성 → {path}")
+    return 0
+
+
 def cmd_probe_toss(args: argparse.Namespace) -> int:
     headers = json.loads(Path(args.headers).read_text()) if args.headers else None
     client = TossClient(session_headers=headers)
@@ -130,6 +172,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-bars", type=int, default=40)
     p.add_argument("--exit-signal", default=None)
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("universe", help="여러 종목을 묶어 검증 (풀링 + breadth + OOS)")
+    p.add_argument("--source", default="csv", choices=["naver", "csv", "synthetic"])
+    p.add_argument("--root", default="data")
+    p.add_argument("--codes", default=None, help="쉼표 구분 종목코드. 생략하면 기본 유니버스")
+    p.add_argument("--interval", default="1d", choices=[i.value for i in Interval])
+    p.add_argument("--count", type=int, default=1200)
+    p.add_argument("--out", default=None)
+    p.add_argument("--train-ratio", type=float, default=0.6)
+    p.add_argument("--min-events", type=int, default=100)
+    p.add_argument("--fee-bps", type=float, default=1.5)
+    p.add_argument("--tax-bps", type=float, default=15.0)
+    p.add_argument("--slippage-bps", type=float, default=5.0)
+    p.set_defaults(func=cmd_universe)
 
     p = sub.add_parser("probe-toss", help="토스 캔들 엔드포인트 파라미터 재탐색")
     p.add_argument("--code", default="005930")

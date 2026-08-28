@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 KST = "Asia/Seoul"
@@ -73,6 +74,42 @@ def validate(df: pd.DataFrame) -> pd.DataFrame:
     if (df["volume"] < 0).any():
         raise OhlcvError("음수 거래량이 있습니다.")
     return df
+
+
+def repair(df: pd.DataFrame, *, tolerance: float = 0.001) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """수정주가 반올림으로 생긴 미세한 정합성 위반을 보정한다.
+
+    국내 시세 제공자는 액면분할·무상증자 등을 소급 반영한 수정주가를 주는데,
+    개별 가격을 따로 반올림하는 탓에 `종가 = 고가 + 1원` 같은 행이 나온다.
+    (예: 삼성SDI 2022-11-01 고가 744,064 / 종가 744,065)
+
+    실제 관측 오차가 아니라 계산 아티팩트이므로, 오차가 tolerance(기본 0.1%)
+    이내면 고가/저가를 시가·종가를 포함하도록 넓혀 보정한다.
+    그보다 큰 위반은 손대지 않는다 — 그건 진짜 잘못된 데이터이고,
+    validate() 가 잡아야 한다.
+
+    반환 (보정된 df, 보정 내역)
+    """
+    out = df.copy()
+    body_hi = out[["open", "close"]].max(axis=1)
+    body_lo = out[["open", "close"]].min(axis=1)
+
+    over = (body_hi - out["high"]).clip(lower=0)
+    under = (out["low"] - body_lo).clip(lower=0)
+    scale = out["close"].abs().replace(0, np.nan)
+    fixable = ((over / scale) <= tolerance) & ((under / scale) <= tolerance)
+    touched = fixable & ((over > 0) | (under > 0))
+
+    log = pd.DataFrame({
+        "high_before": out.loc[touched, "high"],
+        "low_before": out.loc[touched, "low"],
+        "high_gap": over[touched],
+        "low_gap": under[touched],
+    })
+
+    out.loc[touched, "high"] = body_hi[touched]
+    out.loc[touched, "low"] = body_lo[touched]
+    return out, log
 
 
 def resample(df: pd.DataFrame, rule: str) -> pd.DataFrame:

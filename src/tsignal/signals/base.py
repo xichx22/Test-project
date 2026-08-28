@@ -68,11 +68,20 @@ def evaluate_all(
     *,
     names: Iterable[str] | None = None,
     kind: str | None = None,
+    exclude_tags: Iterable[str] = (),
 ) -> pd.DataFrame:
-    """등록된 신호를 모두 평가해 boolean 행렬로 만든다."""
+    """등록된 신호를 모두 평가해 boolean 행렬로 만든다.
+
+    exclude_tags: 해당 태그가 붙은 신호를 뺀다. 일봉에서 장중 전용 신호
+    (VWAP·개장레인지 등)를 제외할 때 쓴다 — 일봉에서는 한 봉이 곧 한 세션이라
+    이 신호들이 자명하거나 무의미해진다.
+    """
     specs = [REGISTRY[n] for n in names] if names else list(REGISTRY.values())
     if kind:
         specs = [s for s in specs if s.kind == kind]
+    if exclude_tags:
+        banned = set(exclude_tags)
+        specs = [s for s in specs if not banned & set(s.tags)]
     data = {s.name: s.evaluate(candles, features) for s in specs}
     return pd.DataFrame(data, index=candles.index)
 

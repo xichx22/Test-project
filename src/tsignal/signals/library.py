@@ -47,7 +47,7 @@ def squeeze_release_up(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
 
 @signal("vwap_reclaim", "breakout",
         rationale="장중 평균단가 회복은 매수세 우위 전환의 신호라는 가설. 단타의 핵심 기준선.",
-        tags=("intraday",))
+        tags=("intraday", "session"))
 def vwap_reclaim(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
     # 개장 직후 VWAP 은 표본이 얇아 노이즈다 → 최소 10봉 경과 후만 인정.
     return cross_up(c["close"], _f(f, "vwap")) & (_f(f, "session_bar") >= 10)
@@ -55,7 +55,7 @@ def vwap_reclaim(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
 
 @signal("opening_range_breakout", "breakout",
         rationale="개장 30분 레인지 상단 돌파가 그날의 방향을 결정한다는 ORB 가설.",
-        tags=("intraday", "classic"))
+        tags=("intraday", "session", "classic"))
 def opening_range_breakout(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
     bar = _f(f, "session_bar")
     session = pd.Series(c.index.date, index=c.index)
@@ -101,7 +101,7 @@ def adx_trend_start(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
 
 @signal("vwap_pullback_hold", "pullback",
         rationale="VWAP 위에서 눌림 후 지지받으면 장중 추세가 유지된다는 가설.",
-        tags=("intraday",))
+        tags=("intraday", "session"))
 def vwap_pullback_hold(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
     dev = _f(f, "vwap_dev_pct")
     return (dev > 0) & (dev.shift(1) < 0.1) & (c["close"] > c["open"]) & (_f(f, "session_bar") >= 10)
@@ -125,7 +125,7 @@ def envelope_lower_touch(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
         tags=("envelope",))
 def envelope_lower_reclaim(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
     below = c["close"] < _f(f, "env_lower")
-    return (~below) & below.shift(1).fillna(False)
+    return (~below) & below.shift(1, fill_value=False)
 
 
 @signal("envelope_atr_lower_reclaim", "reversion",
@@ -133,7 +133,7 @@ def envelope_lower_reclaim(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
         tags=("envelope", "adaptive"))
 def envelope_atr_lower_reclaim(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
     below = c["close"] < _f(f, "enva_lower")
-    return (~below) & below.shift(1).fillna(False)
+    return (~below) & below.shift(1, fill_value=False)
 
 
 @signal("williams_oversold_turn", "reversion",
@@ -173,7 +173,7 @@ def stochrsi_oversold_cross(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
         tags=("classic",))
 def bollinger_lower_reclaim(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
     below = c["close"] < _f(f, "bb_lower")
-    return (~below) & below.shift(1).fillna(False)
+    return (~below) & below.shift(1, fill_value=False)
 
 
 @signal("cci_oversold_turn", "reversion",
@@ -308,7 +308,8 @@ def exit_rsi_overbought(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
 
 
 @signal("exit_vwap_lose", "breakout", side=SHORT, kind="exit",
-        rationale="장중 기준선을 내주면 그날의 매수 우위가 끝난 것.")
+        rationale="장중 기준선을 내주면 그날의 매수 우위가 끝난 것.",
+        tags=("intraday", "session"))
 def exit_vwap_lose(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
     return cross_down(c["close"], _f(f, "vwap"))
 
@@ -321,7 +322,7 @@ def exit_ema20_lose(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
 
 @signal("exit_session_close", "breakout", side=SHORT, kind="exit",
         rationale="단타는 오버나이트 갭 리스크를 지지 않는다 — 장 마감 전 강제 청산.",
-        tags=("intraday", "risk"))
+        tags=("intraday", "session", "risk"))
 def exit_session_close(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
     # 거래소 일정은 사전에 알려진 정보이므로 시각 비교는 미래참조가 아니다.
     # (shift(-1) 로 '다음 봉이 있는지' 보는 방식은 미래참조가 되므로 쓰지 않는다.)
