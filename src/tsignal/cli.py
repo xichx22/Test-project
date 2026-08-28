@@ -170,6 +170,36 @@ def _load_universe(args: argparse.Namespace) -> tuple[dict, Interval]:
     return data, interval
 
 
+def cmd_fetch_flow(args: argparse.Namespace) -> int:
+    """투자자별 수급(기관·외국인 순매매량)을 종목별로 저장한다."""
+    from .datasource.naver_flow import NaverFlowSource
+
+    interval = Interval(args.interval)
+    sink = CsvDataSource(args.root)
+    codes = args.codes.split(",") if args.codes else [s.code for s in sink.symbols(interval)]
+    source = NaverFlowSource(min_interval_sec=args.interval_sec)
+
+    saved, failed = 0, []
+    for code in codes:
+        path = sink.flow_path(code, interval)
+        if path.exists() and not args.overwrite:
+            continue
+        try:
+            frame = source.flow(code, count=args.count)
+        except Exception as exc:                       # noqa: BLE001
+            failed.append(f"{code}: {type(exc).__name__}")
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_csv(path, index_label="dt")
+        saved += 1
+        if saved % 20 == 0:
+            print(f"  {saved}종목 완료", flush=True)
+    print(f"수급 저장 {saved}종목 / 실패 {len(failed)}")
+    if failed:
+        print(f"  {', '.join(failed[:5])}", file=sys.stderr)
+    return 0 if saved or not failed else 1
+
+
 def cmd_fetch_universe(args: argparse.Namespace) -> int:
     """시총 상위 종목 목록을 받아 캔들을 통째로 저장한다."""
     from .datasource.universe_list import fetch_universe, to_frame
@@ -194,6 +224,14 @@ def cmd_fetch_universe(args: argparse.Namespace) -> int:
             short.append(f"{symbol.code} {symbol.name}({len(candles)}봉)")
             continue
         sink.save(candles, symbol.code, interval)
+        if args.extras:
+            # 외국인소진율은 같은 응답에 딸려 오지만 한 번 더 받아야 한다
+            # (candles() 가 OHLCV 규격만 돌려주기 때문). 요청 1회 추가.
+            try:
+                sink.save_extras(source.extras(symbol.code, interval, count=args.count),
+                                 symbol.code, interval)
+            except Exception as exc:                   # noqa: BLE001
+                failed.append(f"{symbol.code} extras: {type(exc).__name__}")
         saved += 1
     print(f"저장 {saved}종목 / 봉부족 {len(short)} / 실패 {len(failed)}")
     if short:
@@ -226,11 +264,15 @@ def cmd_factor(args: argparse.Namespace) -> int:
     if not data:
         print("수집된 종목이 없습니다.", file=sys.stderr)
         return 1
+    flow = None
+    if args.flow and args.source == "csv":
+        flow = CsvDataSource(args.root).load_all_flow(interval)
+        print(f"수급 데이터 {len(flow)}종목")
     out = args.out or f"reports/factor_{interval.value}.md"
     path = write_factor(
         data, out, interval=interval,
         horizons=tuple(int(h) for h in args.horizons.split(",")),
-        n_buckets=args.buckets, control=args.control,
+        n_buckets=args.buckets, control=args.control, flow_by_code=flow,
     )
     print(f"{len(data)}종목 팩터 리포트 생성 → {path}")
     return 0
@@ -372,7 +414,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--kosdaq", type=int, default=50)
     p.add_argument("--count", type=int, default=1200)
     p.add_argument("--min-bars", type=int, default=400)
+    p.add_argument("--extras", action="store_true", help="외국인소진율 등 부가 데이터도 저장")
     p.set_defaults(func=cmd_fetch_universe)
+
+    p = sub.add_parser("fetch-flow", help="투자자별 수급 수집 (기관·외국인 순매매량)")
+    p.add_argument("--root", default="data")
+    p.add_argument("--interval", default="1d", choices=[i.value for i in Interval])
+    p.add_argument("--codes", default=None)
+    p.add_argument("--count", type=int, default=1200)
+    p.add_argument("--interval-sec", type=float, default=0.5, help="요청 간격 (서버 부담 고려)")
+    p.add_argument("--overwrite", action="store_true")
+    p.set_defaults(func=cmd_fetch_flow)
 
     p = sub.add_parser("walkforward", help="롤링 워크포워드 (분할을 여러 번)")
     p.add_argument("--source", default="csv", choices=["naver", "csv", "synthetic"])
@@ -400,6 +452,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--horizons", default="5,20")
     p.add_argument("--buckets", type=int, default=10)
     p.add_argument("--control", default="ret_120")
+    p.add_argument("--flow", action="store_true", help="투자자별 수급 팩터 포함 (csv 소스)")
     p.set_defaults(func=cmd_factor)
 
     p = sub.add_parser("probe-toss", help="브라우저 요청으로 토스 캔들 엔드포인트 확정")

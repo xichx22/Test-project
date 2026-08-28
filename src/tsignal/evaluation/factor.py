@@ -63,7 +63,35 @@ FACTOR_SPECS: dict[str, str] = {
     "rsi_14": "RSI(14)",
     "atrp_14": "ATR(14)/종가 ×100 — 변동성",
     "rangepos_20": "20봉 레인지 내 위치 (0=하단, 1=상단)",
+    # --- 수급 (extras 가 있을 때만) ---
+    "foreign_rate": "외국인 지분율 수준 (%)",
+    "foreign_flow_1": "외국인 지분율 1일 변화 (%p) — 하루치 순매수 프록시",
+    "foreign_flow_5": "외국인 지분율 5일 변화 (%p)",
+    "foreign_flow_20": "외국인 지분율 20일 변화 (%p)",
+    "foreign_flow_z": "20일 순매수의 z-score (자기 종목 기준 60일)",
 }
+
+FLOW_FACTORS = ("foreign_rate", "foreign_flow_1", "foreign_flow_5",
+                "foreign_flow_20", "foreign_flow_z")
+
+# 투자자별 순매매량 기반 팩터 (data/flow 가 있을 때)
+FACTOR_SPECS.update({
+    "inst_ratio": "기관 순매수 / 그날 거래량 — 하루치",
+    "foreign_ratio": "외국인 순매수 / 그날 거래량 — 하루치",
+    "combined_ratio": "기관+외국인 순매수 / 거래량",
+    "inst_ratio_5": "기관 순매수 비중 5일 평균",
+    "foreign_ratio_5": "외국인 순매수 비중 5일 평균",
+    "combined_ratio_5": "기관+외국인 순매수 비중 5일 평균",
+    "inst_ratio_20": "기관 순매수 비중 20일 평균",
+    "foreign_ratio_20": "외국인 순매수 비중 20일 평균",
+    "combined_ratio_20": "기관+외국인 순매수 비중 20일 평균",
+})
+
+TRADE_FLOW_FACTORS = (
+    "inst_ratio", "foreign_ratio", "combined_ratio",
+    "inst_ratio_5", "foreign_ratio_5", "combined_ratio_5",
+    "inst_ratio_20", "foreign_ratio_20", "combined_ratio_20",
+)
 
 
 def build_factor_panel(
@@ -72,8 +100,16 @@ def build_factor_panel(
     interval: Interval = Interval.D1,
     horizon: int = 5,
     entry: str = "next_open",
+    extras_by_code: Mapping[str, pd.DataFrame] | None = None,
+    flow_by_code: Mapping[str, pd.DataFrame] | None = None,
 ) -> FactorPanel:
-    """종목별로 팩터와 전방수익률을 계산해 하나의 긴 표로 쌓는다."""
+    """종목별로 팩터와 전방수익률을 계산해 하나의 긴 표로 쌓는다.
+
+    extras_by_code 를 주면 수급 팩터가 함께 만들어진다.
+    `foreign_rate`(외국인 지분율)의 변화가 외국인 순매수의 프록시다.
+    """
+    extras_by_code = extras_by_code or {}
+    flow_by_code = flow_by_code or {}
     rows = []
     for code, candles in candles_by_code.items():
         features = ind.compute_all(candles, interval=interval)
@@ -92,6 +128,31 @@ def build_factor_panel(
             "rangepos_20": features["rangepos_20"],
             "fwd": fwd,
         })
+
+        extras = extras_by_code.get(code)
+        if extras is not None and "foreign_rate" in extras.columns:
+            rate = extras["foreign_rate"].reindex(candles.index)
+            flow20 = rate - rate.shift(20)
+            frame["foreign_rate"] = rate
+            frame["foreign_flow_1"] = rate.diff()
+            frame["foreign_flow_5"] = rate - rate.shift(5)
+            frame["foreign_flow_20"] = flow20
+            # 종목마다 지분율 변동 폭이 다르므로 자기 기준으로 표준화한다.
+            frame["foreign_flow_z"] = (
+                (flow20 - flow20.rolling(60, min_periods=60).mean())
+                / flow20.rolling(60, min_periods=60).std(ddof=0).replace(0, np.nan)
+            )
+
+        flow = flow_by_code.get(code)
+        if flow is not None and not flow.empty:
+            from ..datasource.naver_flow import flow_features
+
+            features_flow = flow_features(flow, candles["volume"])
+            for column in features_flow.columns:
+                if column == "foreign_rate" and "foreign_rate" in frame.columns:
+                    continue      # extras 쪽 값을 우선한다 (같은 값이다)
+                frame[column] = features_flow[column].reindex(candles.index)
+
         rows.append(frame.dropna())
 
     panel = pd.concat(rows, ignore_index=True)

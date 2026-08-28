@@ -41,8 +41,16 @@ class NaverDataError(RuntimeError):
     pass
 
 
-def parse_sise(text: str) -> pd.DataFrame:
-    """siseJson 응답 → OHLCV 규격."""
+EXTRA_COLUMNS = ["foreign_rate"]
+
+
+def parse_sise(text: str, *, with_extras: bool = False):
+    """siseJson 응답 → OHLCV 규격.
+
+    with_extras=True 면 (ohlcv, extras) 를 돌려준다. extras 에는 응답에 딸려 오는
+    **외국인소진율**(외국인 보유주식 / 상장주식, %)이 들어 있다.
+    이 값의 일별 변화가 곧 외국인 순매수의 프록시다 — 추가 요청 없이 얻는 수급 데이터.
+    """
     try:
         rows = ast.literal_eval(text.strip())
     except (ValueError, SyntaxError) as exc:
@@ -67,7 +75,16 @@ def parse_sise(text: str) -> pd.DataFrame:
     ohlcv, fixed = repair(ohlcv)
     if not fixed.empty:
         ohlcv.attrs["repaired_rows"] = len(fixed)
-    return validate(ohlcv)
+    ohlcv = validate(ohlcv)
+
+    if not with_extras:
+        return ohlcv
+    extras = pd.DataFrame(index=ohlcv.index)
+    if "foreign_rate" in frame.columns:
+        extras["foreign_rate"] = pd.to_numeric(
+            frame["foreign_rate"], errors="coerce"
+        ).reindex(ohlcv.index).astype("float64")
+    return ohlcv, extras
 
 
 class NaverDataSource(DataSource):
@@ -106,6 +123,14 @@ class NaverDataSource(DataSource):
                 f"네이버 소스는 {interval.value} 를 제공하지 않습니다 (일봉만 지원). "
                 "분봉이 필요하면 다른 어댑터를 쓰세요."
             )
+        params = self._params(code, interval, start=start, end=end, count=count)
+        df = parse_sise(self._request(params, code))
+        return df.tail(count) if count else df
+
+    def _params(
+        self, code: str, interval: Interval, *,
+        start: datetime | str | None, end: datetime | str | None, count: int | None,
+    ) -> dict:
         end_ts = pd.Timestamp(end) if end is not None else pd.Timestamp.now()
         if start is not None:
             start_ts = pd.Timestamp(start)
@@ -113,8 +138,7 @@ class NaverDataSource(DataSource):
             # 영업일은 달력일의 약 68% → 여유 있게 잡아 받고 뒤에서 잘라낸다.
             days = int((count or 1000) * 1.6) + 30
             start_ts = end_ts - timedelta(days=days)
-
-        params = {
+        return {
             "symbol": code.lstrip("Aa") if code[:1].upper() == "A" else code,
             "requestType": 1,
             "startTime": start_ts.strftime("%Y%m%d"),
@@ -122,18 +146,39 @@ class NaverDataSource(DataSource):
             "timeframe": _TIMEFRAME[interval],
         }
 
+    def _request(self, params: dict, code: str) -> str:
         last: Exception | None = None
         for attempt in range(self.retries):
             self._throttle()
             try:
                 resp = self._session.get(BASE_URL, params=params, timeout=self.timeout)
                 resp.raise_for_status()
-                df = parse_sise(resp.text)
-                return df.tail(count) if count else df
-            except (requests.RequestException, NaverDataError) as exc:
+                return resp.text
+            except requests.RequestException as exc:
                 last = exc
                 time.sleep(2**attempt)
         raise NaverDataError(f"{self.retries}회 재시도 실패: {code}") from last
+
+    def extras(
+        self,
+        code: str,
+        interval: Interval,
+        *,
+        start: datetime | str | None = None,
+        end: datetime | str | None = None,
+        count: int | None = None,
+    ) -> pd.DataFrame:
+        """OHLCV 에 딸려 오는 부가 컬럼(외국인소진율)만 따로 받는다."""
+        if not self.supports(interval):
+            raise NaverDataError(f"네이버 소스는 {interval.value} 를 제공하지 않습니다.")
+        params = self._params(code, interval, start=start, end=end, count=count)
+        text = self._request(params, code)
+        _, extras = parse_sise(text, with_extras=True)
+        if start is not None:
+            extras = extras[extras.index >= pd.Timestamp(start, tz=KST)]
+        if end is not None:
+            extras = extras[extras.index <= pd.Timestamp(end, tz=KST)]
+        return extras.tail(count) if count else extras
 
     def symbol(self, code: str) -> Symbol:
         return Symbol(code=code)

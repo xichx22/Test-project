@@ -625,12 +625,20 @@ def build_factor(
     n_buckets: int = 10,
     control: str = "ret_120",
     alpha: float = 0.05,
+    flow_by_code: dict[str, pd.DataFrame] | None = None,
 ) -> str:
-    """횡단면 팩터 리포트."""
+    """횡단면 팩터 리포트.
+
+    flow_by_code 를 주면 투자자별 수급 팩터(기관·외국인 순매수 비중)가 함께 들어간다.
+    """
     from .factor import (
-        build_factor_panel, dose_response, double_sort, factor_correlations, market_regression,
+        TRADE_FLOW_FACTORS, build_factor_panel, dose_response, double_sort,
+        factor_correlations, market_regression,
     )
     from .validation import deflated_threshold
+
+    if flow_by_code:
+        factors = tuple(factors) + TRADE_FLOW_FACTORS
 
     out: list[str] = []
     add = out.append
@@ -650,7 +658,9 @@ def build_factor(
     add("")
 
     for horizon in horizons:
-        panel = build_factor_panel(candles_by_code, interval=interval, horizon=horizon)
+        panel = build_factor_panel(
+            candles_by_code, interval=interval, horizon=horizon, flow_by_code=flow_by_code
+        )
         add(f"## 보유 {horizon}봉\n")
         add(f"표본 {len(panel.frame):,}행 · {panel.codes}종목 · {panel.days}일\n")
 
@@ -660,6 +670,7 @@ def build_factor(
             reg = market_regression(panel, factor, n_buckets=n_buckets)
             rows.append({
                 "factor": factor,
+                "구분": "수급" if factor in TRADE_FLOW_FACTORS else "가격",
                 "단조성ρ": meta["monotone_rho"],
                 "스프레드%": abs(meta["spread_mean"]) * 100,
                 "겹침t": abs(meta["spread_t_overlap"]),
@@ -681,7 +692,9 @@ def build_factor(
     add("## 팩터 간 순위상관\n")
     add("상관이 높으면 같은 것을 다르게 부르고 있을 뿐이다. "
         "여러 팩터가 '유의'해 보여도 실제로는 하나를 여러 번 센 것일 수 있다.\n")
-    panel = build_factor_panel(candles_by_code, interval=interval, horizon=horizons[-1])
+    panel = build_factor_panel(
+        candles_by_code, interval=interval, horizon=horizons[-1], flow_by_code=flow_by_code
+    )
     add(_md_table(factor_correlations(panel, factors)))
     add("")
 
@@ -701,6 +714,9 @@ def build_factor(
             f"{'방향이 일정하지 않다' if spreads['t'].gt(0).nunique() > 1 else '방향이 일정하다'}\n")
 
     add("## 한계\n")
+    if flow_by_code:
+        add("- 수급은 **기관·외국인 순매매량 / 그날 거래량** 비중이다. 개인은 잔차이므로 "
+            "따로 넣지 않았다 (기관+외국인의 부호를 뒤집은 것과 거의 같다).")
     add("- 현재 상장 종목만 담겨 **생존 편향**이 남아 있다.")
     add("- 매매비용 차감 전이다. 분위 재구성 회전율까지 반영하면 더 나빠진다.")
     add("- 이 표본 기간이 특정 레짐일 수 있다.")
