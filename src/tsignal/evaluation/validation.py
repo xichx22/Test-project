@@ -119,6 +119,50 @@ def _norm_ppf(p: float) -> float:
     return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1)
 
 
+def p_from_t(t: float | np.ndarray, n: int | np.ndarray) -> np.ndarray:
+    """양측 p값. 표본이 100을 넘는 구간만 쓰므로 정규근사로 충분하다.
+
+    (자유도 100에서 t분포와 정규분포의 양측 p값 차이는 유의수준 근처에서 3% 미만이다.)
+    """
+    z = np.abs(np.asarray(t, dtype=float))
+    return 2 * (1 - _norm_cdf(z))
+
+
+def _norm_cdf(z: np.ndarray) -> np.ndarray:
+    from math import erf, sqrt
+
+    vec = np.vectorize(lambda x: 0.5 * (1 + erf(x / sqrt(2))))
+    return vec(z)
+
+
+def benjamini_hochberg(pvalues: np.ndarray, alpha: float = 0.1) -> np.ndarray:
+    """BH-FDR. 기대 오발견 비율을 alpha 이하로 통제한다.
+
+    Šidák/Bonferroni 는 '하나라도 틀리면 안 된다'(FWER)를 통제해서,
+    조합 수천 개를 훑는 스크리닝에서는 지나치게 보수적이다.
+    BH 는 '채택한 것 중 몇 %가 가짜여도 되는가'를 통제하므로 탐색 단계에 맞다.
+    두 잣대를 나란히 보여주고, 최종 판단은 OOS 로 한다.
+
+    반환: 각 가설의 기각 여부(bool 배열)
+    """
+    p = np.asarray(pvalues, dtype=float)
+    ok = np.isfinite(p)
+    out = np.zeros(len(p), dtype=bool)
+    if not ok.any():
+        return out
+
+    idx = np.argsort(p[ok])
+    ranked = p[ok][idx]
+    m = len(ranked)
+    thresholds = alpha * np.arange(1, m + 1) / m
+    passed = ranked <= thresholds
+    if not passed.any():
+        return out
+    cutoff = ranked[np.max(np.flatnonzero(passed))]
+    out[ok] = p[ok] <= cutoff
+    return out
+
+
 def verdict(row: pd.Series, *, t_threshold: float, min_events: int = 30) -> str:
     """스크리너 한 줄 → 채택/보류/기각 판정."""
     n = row.get("n", 0)

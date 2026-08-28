@@ -19,7 +19,7 @@ from . import indicators as ind
 from . import signals as sig
 from .datasource import CsvDataSource, Interval, get_source
 from .datasource.toss import TossClient
-from .evaluation.report import ReportConfig, write, write_universe
+from .evaluation.report import ReportConfig, write, write_combination, write_universe
 from .evaluation.trades import CostModel, ExitPolicy
 
 
@@ -51,8 +51,11 @@ def cmd_catalog(args: argparse.Namespace) -> int:
         print("=== 지표 ===")
         print(ind.catalog().to_string(index=False))
     if args.what in ("signals", "all"):
-        print("\n=== 신호 ===")
+        print("\n=== 신호 (트리거/청산) ===")
         print(sig.catalog().to_string(index=False))
+    if args.what in ("filters", "all"):
+        print("\n=== 상태 필터 ===")
+        print(sig.filters.catalog().to_string(index=False))
     return 0
 
 
@@ -127,6 +130,36 @@ def cmd_universe(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_combine(args: argparse.Namespace) -> int:
+    interval = Interval(args.interval)
+    codes = args.codes.split(",") if args.codes else list(DEFAULT_UNIVERSE)
+    kwargs = {"root": args.root} if args.source == "csv" else {}
+    source = get_source(args.source, **kwargs)
+
+    data, failed = {}, []
+    for code in codes:
+        try:
+            data[code] = source.candles(code, interval, count=args.count)
+        except Exception as exc:                       # noqa: BLE001
+            failed.append(f"{code}: {type(exc).__name__} {str(exc)[:60]}")
+    if failed:
+        print("수집 실패:\n  " + "\n  ".join(failed), file=sys.stderr)
+    if not data:
+        print("수집된 종목이 없습니다.", file=sys.stderr)
+        return 1
+
+    out = args.out or f"reports/combination_{interval.value}.md"
+    path = write_combination(
+        data, out, interval=interval,
+        horizons=tuple(int(h) for h in args.horizons.split(",")),
+        exclude_tags=("session",) if interval is Interval.D1 else (),
+        train_ratio=args.train_ratio, max_filters=args.max_filters,
+        min_events=args.min_events, top_k=args.top_k, names=DEFAULT_UNIVERSE,
+    )
+    print(f"{len(data)}종목 조합 탐색 리포트 생성 → {path}")
+    return 0
+
+
 def cmd_probe_toss(args: argparse.Namespace) -> int:
     headers = json.loads(Path(args.headers).read_text()) if args.headers else None
     client = TossClient(session_headers=headers)
@@ -150,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("catalog", help="등록된 지표/신호 목록")
-    p.add_argument("--what", default="all", choices=["indicators", "signals", "all"])
+    p.add_argument("--what", default="all", choices=["indicators", "signals", "filters", "all"])
     p.set_defaults(func=cmd_catalog)
 
     p = sub.add_parser("fetch", help="캔들 수집 후 CSV 저장")
@@ -186,6 +219,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tax-bps", type=float, default=15.0)
     p.add_argument("--slippage-bps", type=float, default=5.0)
     p.set_defaults(func=cmd_universe)
+
+    p = sub.add_parser("combine", help="트리거 × 상태필터 조합 탐색 (IS 선정 → OOS 채점)")
+    p.add_argument("--source", default="csv", choices=["naver", "csv", "synthetic"])
+    p.add_argument("--root", default="data")
+    p.add_argument("--codes", default=None)
+    p.add_argument("--interval", default="1d", choices=[i.value for i in Interval])
+    p.add_argument("--count", type=int, default=1200)
+    p.add_argument("--out", default=None)
+    p.add_argument("--horizons", default="3,5,10")
+    p.add_argument("--train-ratio", type=float, default=0.6)
+    p.add_argument("--max-filters", type=int, default=2)
+    p.add_argument("--min-events", type=int, default=80)
+    p.add_argument("--top-k", type=int, default=20)
+    p.set_defaults(func=cmd_combine)
 
     p = sub.add_parser("probe-toss", help="토스 캔들 엔드포인트 파라미터 재탐색")
     p.add_argument("--code", default="005930")

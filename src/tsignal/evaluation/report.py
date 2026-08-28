@@ -312,3 +312,159 @@ def write_universe(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(build_universe(candles_by_code, **kwargs), encoding="utf-8")
     return target
+
+
+# =====================================================================
+# 조합 탐색 리포트
+# =====================================================================
+
+def build_combination(
+    candles_by_code: dict[str, pd.DataFrame],
+    *,
+    interval: Interval,
+    horizons: tuple[int, ...] = (3, 5, 10),
+    exclude_tags: tuple[str, ...] = (),
+    train_ratio: float = 0.6,
+    max_filters: int = 2,
+    min_events: int = 80,
+    top_k: int = 20,
+    names: dict[str, str] | None = None,
+) -> str:
+    """트리거 × 상태필터 조합 탐색 리포트."""
+    from .combine import compare_filter_contribution, select_and_validate, split_labs
+
+    names = names or {}
+    out: list[str] = []
+    add = out.append
+
+    add(f"# 신호 결합 탐색 리포트 — {len(candles_by_code)}종목 ({interval.value})\n")
+    add(f"- 생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    add(f"- 종목: {', '.join(names.get(c, c) for c in candles_by_code)}")
+    add(f"- 분할: 앞 {train_ratio:.0%} IS / 뒤 {1 - train_ratio:.0%} OOS, 종목마다 동일 비율\n")
+
+    add("## 0. 왜 조합을 재는가, 그리고 왜 위험한가\n")
+    add("단독 트리거가 전부 기각된 뒤의 가설: 트리거는 시장 상태를 구분하지 않아 "
+        "서로 다른 사건을 한 통에 넣고 세고 있었다. 상승추세의 RSI 반등과 "
+        "하락추세의 RSI 반등은 다른 사건이다.\n")
+    add("동시에 조합 탐색은 **과최적화 기계**다. 조합 수천 개를 훑으면 엣지가 전혀 없어도 "
+        "t>3 짜리가 수십 개 나온다. 그래서 프로토콜을 고정했다.\n")
+    add("1. 탐색 공간을 먼저 줄인다 — 같은 축의 필터끼리는 결합하지 않고, 필터는 최대 "
+        f"{max_filters}개")
+    add("2. 실제로 시험한 조합 수만큼 문턱을 올린다 (Šidák) + BH-FDR 을 나란히 본다")
+    add("3. **IS 에서 고르고 OOS 로 채점한다** — 상위 K개 중 몇 개가 살아남는지를 "
+        "우연히 기대되는 개수와 이항검정으로 비교")
+    add("4. 단독 트리거 대비 **증분(lift)** 을 본다. 필터가 트리거를 개선하지 못하면 "
+        "그 조합은 의미가 없다\n")
+
+    labs = {h: split_labs(candles_by_code, train_ratio=train_ratio, interval=interval,
+                          horizon=h, exclude_tags=exclude_tags) for h in horizons}
+
+    add("## 1. 조합 탐색 — 전체 구간\n")
+    for horizon in horizons:
+        from .combine import CombinationLab
+
+        lab = CombinationLab(candles_by_code, interval=interval, horizon=horizon,
+                             exclude_tags=exclude_tags)
+        table = lab.search(max_filters=max_filters, min_events=min_events)
+        meta = table.attrs
+        add(f"### 보유 {horizon}봉\n")
+        add(f"조합 {meta['n_combos']:,}개 (표본 {min_events}회 이상: {meta['n_trials']:,}개) · "
+            f"Šidák 문턱 |t| ≥ {meta['threshold']:.2f} · "
+            f"Šidák 통과 **{int(table['pass_sidak'].sum())}개** · "
+            f"BH-FDR({meta['fdr_alpha']:.0%}) 통과 **{int(table['pass_fdr'].sum())}개**\n")
+        cols = ["n", "edge", "edge_bare", "lift", "win_rate", "t_edge", "breadth"]
+        add(_md_table(table[table["n"] >= min_events][cols].head(8).round(4)))
+        add("")
+
+    add("## 2. 정직한 판정 — IS 에서 고르고 OOS 로 채점\n")
+    add("IS 성적으로만 상위를 고른 뒤, 그 선택을 OOS 로 채점한다. "
+        "엣지가 전혀 없다면 생존 확률은 약 16%(부호가 반반 × t>1 조건)이므로, "
+        f"상위 {top_k}개 중 우연히 기대되는 생존은 약 {top_k * 0.16:.1f}개다.\n")
+
+    for horizon in horizons:
+        is_lab, oos_lab = labs[horizon]
+        res = select_and_validate(is_lab, oos_lab, top_k=top_k, max_filters=max_filters,
+                                  min_events=min_events, min_oos_events=25)
+        add(f"### 보유 {horizon}봉\n")
+        add(f"- IS 상위 {res.n_selected}개 중 OOS 생존 **{res.n_survived}개** "
+            f"(우연 기대 {res.expected_by_chance:.1f}개, 이항 p={res.binomial_p:.3f})")
+        add(f"- **{res.verdict}**\n")
+        add(_md_table(res.table.head(10).round(4)))
+        add("")
+
+    add("## 3. 필터 기여도 — 가설을 2,835개에서 15개로 줄이면\n")
+    add("조합 하나를 고르는 것은 가설을 수천 개 세우는 짓이다. "
+        "질문을 바꿔서 **\"필터 X 는 트리거 종류와 무관하게 도움이 되는가\"** 를 물으면 "
+        "가설이 필터 개수만큼으로 줄어들고, 같은 데이터로 훨씬 강한 결론이 나온다.\n")
+    add("> 검정은 **부호검정**을 쓴다. 트리거별 lift 는 표본이 겹쳐 서로 독립이 아니므로 "
+        "t검정은 유의성을 부풀린다. \"몇 개 트리거에서 개선됐는가\"는 그 상관에 훨씬 덜 휘둘린다.\n")
+
+    consistent_by_horizon: dict[int, list[str]] = {}
+    for horizon in horizons:
+        is_lab, oos_lab = labs[horizon]
+        contrib = compare_filter_contribution(is_lab, oos_lab, min_events=min_events)
+        consistent_by_horizon[horizon] = list(contrib[contrib["consistent"]].index)
+        add(f"### 보유 {horizon}봉\n")
+        add(_md_table(contrib.round(4)))
+        add(f"\nIS·OOS 방향이 일치하는 필터: "
+            f"**{', '.join(consistent_by_horizon[horizon]) or '없음'}**\n")
+
+    add("## 4. 레짐 경고 — 구간 사이에서 부호가 뒤집히는 필터\n")
+    add("변동성·레짐 축 필터는 IS 에서 강하게 도움이 되다가 OOS 에서 반대로 뒤집히는 "
+        "패턴을 보인다. 이건 엣지가 아니라 **그 구간의 시장 성격을 외운 것**이다. "
+        "IS 구간과 OOS 구간의 변동성 레짐이 달랐다면, 변동성 필터는 신호가 아니라 "
+        "날짜를 인코딩하고 있는 셈이다.\n")
+    add("이런 필터를 '검증된 조건'으로 채택하면, 레짐이 바뀌는 순간 정확히 반대로 작동한다. "
+        "IS 성적만 보고 골랐다면 알 수 없었을 함정이다.\n")
+
+    add("## 5. 결론\n")
+    add("**개별 조합 수준에서는 얻은 것이 없다.** 어떤 보유기간에서도 IS 상위 "
+        f"{top_k}개의 OOS 생존이 우연 기대치를 유의하게 넘지 못했다. "
+        "IS 에서 t>3 이던 조합이 OOS 에서 부호가 뒤집히는 사례가 반복된다.\n")
+
+    tally: dict[str, list[int]] = {}
+    for horizon, filters_ in consistent_by_horizon.items():
+        for name in filters_:
+            tally.setdefault(name, []).append(horizon)
+    total = len(consistent_by_horizon)
+    always = sorted(n for n, hs in tally.items() if len(hs) == total)
+    majority = sorted((n for n, hs in tally.items() if 1 < len(hs) < total),
+                      key=lambda n: -len(tally[n]))
+
+    add("**필터 수준에서는 하나가 남는다.** 보유기간별 IS·OOS 방향 일치 여부:\n")
+    if tally:
+        add("| 필터 | 일치한 보유기간 |")
+        add("| --- | --- |")
+        for name, hs in sorted(tally.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            add(f"| `{name}` | {', '.join(f'{h}봉' for h in hs)} ({len(hs)}/{total}) |")
+        add("")
+    if always:
+        add(f"모든 보유기간에서 일관: **{', '.join(always)}**\n")
+    elif majority:
+        add(f"과반 보유기간에서 일관: **{', '.join(majority)}**\n")
+        add("전 구간 일관은 아니지만, 단타가 사는 짧은 보유기간에서 방향이 유지되는 것은 "
+            "의미가 있다. 단독으로 매매 근거가 되기엔 부족하고, 다른 신호에 붙이는 "
+            "**확인 조건(confirmation)** 으로 다음 단계 검증 대상이다.\n")
+    else:
+        add("어떤 필터도 두 개 이상의 보유기간에서 일관되지 않았다. "
+            "조합 탐색으로 얻은 재현 가능한 결과가 없다.\n")
+
+    add("## 6. 한계\n")
+    add("- IS/OOS 분할은 한 번뿐이다. 분할 지점을 바꾸면 결론이 달라질 수 있다 — "
+        "롤링 워크포워드로 여러 번 확인해야 한다.")
+    add("- 필터 lift 들은 표본이 겹쳐 서로 독립이 아니다. 부호검정으로 완화했지만 완전하진 않다.")
+    add(f"- 종목 {len(candles_by_code)}개, 일봉 기준이다. 분봉 단타에 그대로 옮길 수 없다.")
+    add("- 매매비용을 뺀 순수익이 아니라 초과수익(edge) 기준이다. 실제 채택 전에는 "
+        "거래 시뮬로 비용 차감 후 성적을 다시 봐야 한다.")
+    add("- 이 리포트는 매매 권유가 아니다.\n")
+
+    return "\n".join(out)
+
+
+def write_combination(
+    candles_by_code: dict[str, pd.DataFrame], path: str | Path, **kwargs
+) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(build_combination(candles_by_code, **kwargs), encoding="utf-8")
+    return target

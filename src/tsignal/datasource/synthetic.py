@@ -7,6 +7,7 @@ GBM + 장중 U자 거래량 + 세션 경계까지 재현해서, 분봉 로직의
 
 from __future__ import annotations
 
+import zlib
 from datetime import datetime
 
 import numpy as np
@@ -57,7 +58,9 @@ class SyntheticDataSource(DataSource):
         count: int | None = None,
     ) -> pd.DataFrame:
         # 코드별로 다른(그러나 재현 가능한) 시계열을 준다.
-        rng = np.random.default_rng(self.seed + (abs(hash(code)) % 10_000))
+        # 파이썬 내장 hash() 는 PYTHONHASHSEED 로 프로세스마다 달라져 재현성이 깨진다.
+        # 재현 가능한 검증이 이 프로젝트의 전제이므로 안정 해시를 쓴다.
+        rng = np.random.default_rng(self.seed + (zlib.crc32(code.encode("utf-8")) % 10_000))
         last = pd.Timestamp(end, tz=KST) if end is not None else pd.Timestamp.now(tz=KST)
 
         bars_per_day = 1 if interval is Interval.D1 else max(1, 390 // (interval.minutes or 1))
