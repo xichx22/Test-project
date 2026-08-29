@@ -167,12 +167,16 @@ def swing_portfolio(
     """
     from .allocation import BacktestResult
 
-    returns, held, entries = {}, {}, {}
+    returns, held, entries, entry_returns = {}, {}, {}, {}
     for code, candles in candles_by_code.items():
         series = events_by_code.get(code)
         if series is None or not series.any():
             continue
         returns[code] = candles["close"].pct_change()
+        # 체결일은 종가-종가가 아니라 시가→종가다. 종가-종가를 쓰면 신호 다음날
+        # 시가 갭까지 먹는데, 그건 사기 전에 벌어진 움직임이라 얻을 수 없다.
+        # 실측(368종목 11년): 신호 다음날 갭 +0.301% vs 평균 +0.092%.
+        entry_returns[code] = candles["close"] / candles["open"] - 1
         entered = (
             series.reindex(candles.index).fillna(False).astype(bool)
             .shift(1, fill_value=False).astype(bool)
@@ -196,7 +200,10 @@ def swing_portfolio(
     count = hold.sum(axis=1)
     invested = count > 0
     # 보유 종목 동일가중 수익. 보유가 없으면 현금.
-    gross = (ret.where(hold).sum(axis=1) / count.replace(0, np.nan)).fillna(0.0)
+    ent_ret = (pd.DataFrame(entry_returns)
+               .reindex(index=ret.index, columns=ret.columns).fillna(0.0))
+    per_bar = ret.where(~ent, ent_ret)
+    gross = (per_bar.where(hold).sum(axis=1) / count.replace(0, np.nan)).fillna(0.0)
     cash_daily = (1 + cash_rate) ** (1 / 252) - 1
     daily = np.where(invested, gross, cash_daily)
 

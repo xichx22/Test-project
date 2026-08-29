@@ -375,6 +375,61 @@ def _is_domestic_equity(code: str) -> bool:
     return bool(spec and not spec.taxable)
 
 
+def cmd_swing(args: argparse.Namespace) -> int:
+    """스윙 규칙 수천 개를 연수익으로 줄 세우고, 그 순위가 진짜인지 확인한다."""
+    import pandas as pd
+
+    from .evaluation.swinglab import SwingLab, split_test
+
+    source = CsvDataSource(args.root)
+    interval = Interval(args.interval)
+    codes = args.codes.split(",") if args.codes else [
+        s.code for s in source.symbols(interval)]
+    data = {code: source.candles(code, interval) for code in codes}
+    if not data:
+        print(f"{args.root} 에 캔들이 없습니다.", file=sys.stderr)
+        return 1
+
+    lab = SwingLab(data, interval=interval)
+    bench = lab.benchmark()
+    print(f"[벤치] 유니버스 동일가중 매수후보유 {bench.years:.1f}년  "
+          f"연 {bench.cagr:.2%}  MDD {bench.max_drawdown:.2%}  "
+          f"궤양 {bench.ulcer_index:.2f}")
+    print(f"종목 {len(lab.codes)}  트리거 {len(lab.trigger_names)}  "
+          f"필터 {len(lab.filter_names)}")
+
+    holdings = tuple(int(h) for h in args.holdings.split(","))
+    board = lab.leaderboard(holdings=holdings, cost_bps=args.cost_bps,
+                            min_trades=args.min_trades)
+    if board.empty:
+        print("조건을 만족하는 규칙이 없습니다.", file=sys.stderr)
+        return 1
+    pd.set_option("display.width", 250)
+    shown = board.head(args.top).copy()
+    for column in ("연수익", "변동성", "MDD", "최악12M", "투자비중"):
+        shown[column] = shown[column].map("{:.2%}".format)
+    for column in ("샤프", "궤양"):
+        shown[column] = shown[column].map("{:.2f}".format)
+    shown["양수율12M"] = shown["양수율12M"].map("{:.3f}".format)
+    print(f"\n== 연수익 상위 {args.top} (조합 {len(board)}개 중) ==")
+    print(shown.to_string(index=False))
+    beat = int((board["연수익"] > bench.cagr).sum())
+    print(f"\n벤치마크를 이긴 조합 {beat} / {len(board)}")
+
+    print("\n== 전반부에서 뽑아 후반부에서 채점 ==")
+    split = split_test(lab, board, top=args.top, cost_bps=args.cost_bps)
+    view = split.copy()
+    for column in ("전반부", "후반부", "차이"):
+        view[column] = view[column].map("{:.2%}".format)
+    print(view.to_string(index=False))
+    if "spearman" in split.attrs:
+        print(f"순위 상관 {split.attrs['spearman']:.3f}  "
+              f"(벤치 전반 {split.attrs['bench_first']:.2%} / "
+              f"후반 {split.attrs['bench_second']:.2%})")
+        print("순위 상관이 0 근처면 순위표는 잡음이다 — 1등을 골라도 소용이 없다.")
+    return 0
+
+
 def cmd_probe_toss(args: argparse.Namespace) -> int:
     """브라우저에서 복사한 요청으로 토스 캔들 엔드포인트를 확정한다."""
     from .datasource.toss import TossApiError, TossClient, parse_candles, save_session
@@ -576,6 +631,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--liquidity-days", type=int, default=250)
     p.add_argument("--principal", type=float, default=10_000_000)
     p.set_defaults(func=cmd_portfolio)
+
+    p = sub.add_parser("swing", help="스윙 규칙 순위표 + 순위가 유지되는지 검정")
+    p.add_argument("--root", default="data_big")
+    p.add_argument("--interval", default="1d", choices=[i.value for i in Interval])
+    p.add_argument("--codes", default=None)
+    p.add_argument("--holdings", default="5,10,20,60")
+    p.add_argument("--cost-bps", type=float, default=28.0)
+    p.add_argument("--min-trades", type=int, default=200)
+    p.add_argument("--top", type=int, default=25)
+    p.set_defaults(func=cmd_swing)
 
     p = sub.add_parser("probe-toss", help="브라우저 요청으로 토스 캔들 엔드포인트 확정")
     p.add_argument("--curl", default=None,
