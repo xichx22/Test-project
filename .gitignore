@@ -11,3 +11,9 @@ reports/
 
 # 브라우저에서 복사한 토스 세션(쿠키 포함) — 절대 커밋하지 말 것
 *.session.json
+
+# 확장 유니버스 (1,064종목 × 21년, 약 260MB) — 저장소에 넣기엔 크고
+# 아래 한 줄로 재생성된다:
+#   python -m tsignal fetch-universe --root data_wide \
+#       --kospi 600 --kosdaq 600 --count 5000 --min-bars 800
+data_wide/

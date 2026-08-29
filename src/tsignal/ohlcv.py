@@ -76,7 +76,30 @@ def validate(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def repair(df: pd.DataFrame, *, tolerance: float = 0.005) -> tuple[pd.DataFrame, pd.DataFrame]:
+# KRX 주식 호가 단위 (2023년 개편 기준). 반올림 오차의 자연스러운 크기다.
+TICK_BANDS = (
+    (2_000, 1), (5_000, 5), (20_000, 10), (50_000, 50),
+    (200_000, 100), (500_000, 500), (float("inf"), 1_000),
+)
+
+
+def tick_size(price: pd.Series) -> pd.Series:
+    """가격대별 호가 단위. 수정주가라 실제 틱과 정확히 맞지는 않지만,
+    "반올림 오차가 가격에 비례하지 않는다"는 성질을 담기에는 충분하다."""
+    out = pd.Series(1.0, index=price.index)
+    lower = 0.0
+    for upper, tick in TICK_BANDS:
+        out = out.mask((price >= lower) & (price < upper), float(tick))
+        lower = upper
+    return out
+
+
+def repair(
+    df: pd.DataFrame,
+    *,
+    tolerance: float = 0.005,
+    max_ticks: float = 5.0,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """수정주가 반올림으로 생긴 미세한 정합성 위반을 보정한다.
 
     국내 시세 제공자는 액면분할·무상증자 등을 소급 반영한 수정주가를 주는데,
@@ -88,10 +111,31 @@ def repair(df: pd.DataFrame, *, tolerance: float = 0.005) -> tuple[pd.DataFrame,
     그보다 큰 위반은 손대지 않는다 — 그건 진짜 잘못된 데이터이고,
     validate() 가 잡아야 한다.
 
-    허용치가 0.5% 인 이유: 기간이 길수록(10년) 오래된 저가 구간의 반올림 오차
+    허용치가 0.5% 인 이유: 기간이 길수록 오래된 저가 구간의 반올림 오차
     비율이 커진다. 실측에서 대한전선 0.28%, 에코프로 0.12% 까지 나왔다.
     반면 진짜 깨진 데이터(시가/고가/저가가 0 인 거래정지 행)는 오차가 100% 라
     이 문턱으로 충분히 갈린다.
+
+    비율만으로는 부족하다 — `absolute` 를 함께 두는 이유
+    ----------------------------------------------------
+    반올림 오차는 **가격에 비례하지 않는다**. 언제나 호가 한 틱 남짓이다.
+    그래서 주가가 낮을수록 같은 1원이 큰 비율이 된다. 20년치를 받으면
+    2004년 구간의 수정주가가 세 자릿수까지 내려가고, 1원 차이가 0.6% 가 된다.
+    실측(파미셀 2004년): 최대 위반 1.183%, 249봉 중 37봉. 비율 문턱만 쓰면
+    이런 종목이 통째로 버려지는데, 하필 **가장 오래된 종목들만** 골라서
+    빠진다. 표본에서 옛날 구간이 계통적으로 사라지는 것이다.
+
+    그래서 "비율이 작거나, **호가 몇 틱 이내면**" 보정한다. 틱으로 재는 이유는
+    반올림 오차의 자연스러운 단위가 틱이기 때문이다. 실측에서 남은 위반은
+    전부 3~6원이었고 (유진테크 545원에 3원, 코맥스 714원에 5원) 그 가격대의
+    호가 단위는 1원이다. 즉 몇 틱짜리 오차다.
+
+    다만 왜 1틱이 아니라 3~6틱인지는 설명하지 못했다. 수정 계수를 필드마다
+    따로 적용한 흔적으로 보이지만 확인할 방법이 없다. 그래서 이 문턱은
+    **경험적**이고, 그만큼 결론이 여기에 의존하면 안 된다 —
+    보정 대상 종목을 넣고 뺀 두 결과를 같이 봐야 한다.
+
+    거래정지 행(가격 0)은 오차가 가격 전체 크기라 여전히 걸러진다.
 
     반환 (보정된 df, 보정 내역)
     """
@@ -102,7 +146,10 @@ def repair(df: pd.DataFrame, *, tolerance: float = 0.005) -> tuple[pd.DataFrame,
     over = (body_hi - out["high"]).clip(lower=0)
     under = (out["low"] - body_lo).clip(lower=0)
     scale = out["close"].abs().replace(0, np.nan)
-    fixable = ((over / scale) <= tolerance) & ((under / scale) <= tolerance)
+    small_ratio = ((over / scale) <= tolerance) & ((under / scale) <= tolerance)
+    allowance = tick_size(scale) * max_ticks
+    small_tick = (over <= allowance) & (under <= allowance)
+    fixable = small_ratio | small_tick
     touched = fixable & ((over > 0) | (under > 0))
 
     log = pd.DataFrame({
