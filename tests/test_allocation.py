@@ -93,3 +93,71 @@ def test_max_drawdown_is_computed_on_the_equity_curve():
     flat_then_half = _series([100.0] * 250 + [50.0] * 250)
     result = buy_and_hold(flat_then_half, cash_rate=0.0, one_way_bps=0.0)
     assert result.max_drawdown == pytest.approx(-0.5, abs=1e-6)
+
+
+# =====================================================================
+# 정적 자산배분 + 리밸런싱
+# =====================================================================
+
+from tsignal.evaluation.allocation import static_mix  # noqa: E402
+
+
+def _two_assets(n: int = 1500, corr: float = 0.0, seed: int = 11):
+    rng = np.random.default_rng(seed)
+    a = rng.normal(0.0004, 0.012, n)
+    b = corr * a + np.sqrt(max(0.0, 1 - corr**2)) * rng.normal(0.0002, 0.004, n)
+    idx = pd.bdate_range("2010-01-01", periods=n, tz="Asia/Seoul")
+    return (pd.Series(100 * np.cumprod(1 + a), index=idx),
+            pd.Series(100 * np.cumprod(1 + b), index=idx))
+
+
+def test_mixing_uncorrelated_assets_lowers_volatility_more_than_return():
+    """분산 효과: 상관이 낮은 자산을 섞으면 변동성이 수익보다 더 많이 준다.
+
+    이건 예측이 아니라 수학적 성질이다 — 이 프로젝트에서 유일하게
+    모든 구간(6/6)에서 일관되게 통과한 결과의 근거이기도 하다.
+    """
+    risky, safe = _two_assets(corr=0.0)
+    stock_only = buy_and_hold(risky, one_way_bps=0.0)
+    mixed = static_mix({"a": risky, "b": safe}, {"a": 0.6, "b": 0.4},
+                       rebalance="QE", one_way_bps=0.0)
+    assert mixed.volatility < stock_only.volatility
+    assert mixed.sharpe > stock_only.sharpe
+
+
+def test_diversification_benefit_shrinks_as_correlation_rises():
+    """상관이 1에 가까워지면 분산 효과가 사라진다 — 이 전략의 유일한 전제."""
+    gains = []
+    for corr in (0.0, 0.5, 0.95):
+        risky, safe = _two_assets(corr=corr)
+        stock_only = buy_and_hold(risky, one_way_bps=0.0)
+        mixed = static_mix({"a": risky, "b": safe}, {"a": 0.6, "b": 0.4},
+                           rebalance="QE", one_way_bps=0.0)
+        gains.append(mixed.sharpe - stock_only.sharpe)
+    assert gains[0] > gains[2], gains
+
+
+def test_static_mix_weights_sum_to_one():
+    risky, safe = _two_assets()
+    mixed = static_mix({"a": risky, "b": safe}, {"a": 3.0, "b": 2.0},   # 정규화되어야 한다
+                       rebalance="QE", one_way_bps=0.0)
+    other = static_mix({"a": risky, "b": safe}, {"a": 0.6, "b": 0.4},
+                       rebalance="QE", one_way_bps=0.0)
+    assert mixed.equity.iloc[-1] == pytest.approx(other.equity.iloc[-1], rel=1e-9)
+
+
+def test_rebalancing_costs_are_charged():
+    risky, safe = _two_assets()
+    free = static_mix({"a": risky, "b": safe}, {"a": 0.6, "b": 0.4},
+                      rebalance="QE", one_way_bps=0.0)
+    charged = static_mix({"a": risky, "b": safe}, {"a": 0.6, "b": 0.4},
+                         rebalance="QE", one_way_bps=100.0)
+    assert charged.equity.iloc[-1] < free.equity.iloc[-1]
+    assert charged.trades > 0
+
+
+def test_no_rebalance_lets_weights_drift():
+    risky, safe = _two_assets()
+    drifting = static_mix({"a": risky, "b": safe}, {"a": 0.6, "b": 0.4},
+                          rebalance=None, one_way_bps=0.0)
+    assert drifting.trades == 0

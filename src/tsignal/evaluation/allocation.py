@@ -228,6 +228,54 @@ def dual_momentum(
                           int((turnover > 1e-9).sum()))
 
 
+def static_mix(
+    assets: dict[str, pd.Series],
+    weights: dict[str, float],
+    *,
+    rebalance: str | None = "QE",
+    one_way_bps: float = ETF_ONE_WAY_BPS,
+    name: str | None = None,
+) -> BacktestResult:
+    """정적 자산배분 + 정기 리밸런싱.
+
+    이건 예측이 아니다. 상관이 낮은 자산을 섞으면 **변동성이 수익률보다 더 많이**
+    줄어드는 성질(분산 효과)과, 오른 자산을 팔고 내린 자산을 사는 리밸런싱이
+    합쳐진 결과다. 금융에서 유일하게 '공짜 점심'이라 불리는 자리다.
+
+    rebalance=None 이면 처음 비중대로 두고 표류하게 둔다 (리밸런싱 효과 분리용).
+    """
+    frame = pd.DataFrame(assets).dropna()
+    returns = frame.pct_change().fillna(0.0)
+    codes = list(frame.columns)
+    target = np.array([weights[c] for c in codes], dtype=float)
+    target = target / target.sum()
+
+    if rebalance:
+        marks = set(frame.resample(rebalance).last().index)
+    else:
+        marks = set()
+
+    holding = target.copy()
+    daily, turnover_log = [], []
+    for timestamp, row in returns.iterrows():
+        grown = holding * (1 + row.to_numpy())
+        total = grown.sum()
+        daily.append(total - 1)
+        holding = grown / total if total > 0 else target.copy()
+        if timestamp in marks:
+            turnover = float(np.abs(target - holding).sum()) / 2
+            turnover_log.append(turnover)
+            daily[-1] -= turnover * 2 * (one_way_bps / 10_000.0)
+            holding = target.copy()
+
+    series = pd.Series(daily, index=returns.index)
+    equity = (1 + series).cumprod()
+    label = name or ("+".join(f"{c}{w:.0%}" for c, w in zip(codes, target))
+                     + (f" {rebalance}리밸" if rebalance else " 무리밸"))
+    weight_series = pd.Series(float(target[0]), index=returns.index)
+    return BacktestResult(label, equity, weight_series, series, len(turnover_log))
+
+
 STRATEGIES: dict[str, Callable[..., BacktestResult]] = {
     "매수후보유": buy_and_hold,
     "Faber 10개월": monthly_sma,
