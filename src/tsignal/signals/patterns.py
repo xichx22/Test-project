@@ -606,6 +606,12 @@ def inverse_head_and_shoulders(
         seg_low = low[start:t]
         if len(seg_low) < 3 * params.min_separation:
             continue
+        # 거래량이 안 실렸거나 이번 봉이 상승이 아니면 돌파일 수 없다.
+        # 세 저점을 찾는 계산 전에 걸러 낸다 (결과는 같다).
+        if not np.isfinite(avg[t]) or volume[t] < params.volume_mult * avg[t]:
+            continue
+        if close[t] <= close[t - 1]:
+            continue
 
         # 세 구간으로 나눠 각 구간의 최저점을 어깨/머리 후보로 삼는다
         third = len(seg_low) // 3
@@ -686,6 +692,15 @@ def falling_wedge(
         if len(seg_high) < params.window:
             continue
 
+        # 돌파부터 본다. 구조 판정(추세선 회귀 2회)은 봉마다 하면 너무 비싸고,
+        # 돌파가 없으면 어차피 신호가 아니다. 순서만 바꾼 것이라 결과는 같다.
+        half = len(seg_high) // 2
+        pivot = seg_high[half:].max()
+        if not _breakout(close, volume, avg, t, pivot, params.volume_mult):
+            continue
+        if not _prior_uptrend(close, start, params.prior_window, params.prior_gain):
+            continue
+
         lines = _envelope_lines(seg_high, seg_low)
         if lines is None:
             continue
@@ -706,14 +721,7 @@ def falling_wedge(
             continue
         if width_end / width_start > params.min_contraction:
             continue
-
-        half = len(seg_high) // 2
-
-        if not _prior_uptrend(close, start, params.prior_window, params.prior_gain):
-            continue
-        pivot = seg_high[half:].max()
-        if _breakout(close, volume, avg, t, pivot, params.volume_mult):
-            out[t] = True
+        out[t] = True
     return pd.Series(out, index=candles.index, name="falling_wedge")
 
 

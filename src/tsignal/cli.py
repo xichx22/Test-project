@@ -430,6 +430,60 @@ def cmd_swing(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_pattern_lab(args: argparse.Namespace) -> int:
+    """차트 패턴 전종 검증 — 검출 · 채점 · 구간 분할을 한 번에."""
+    import pandas as pd
+
+    from .evaluation.patternlab import detect, score, subperiods
+    from .signals.patterns import FAMOUS_PATTERNS, PATTERNS
+
+    source = CsvDataSource(args.root)
+    interval = Interval(args.interval)
+    data = {}
+    for symbol in source.symbols(interval):
+        candles = source.candles(symbol.code, interval)
+        if args.end:
+            candles = candles[candles.index <= pd.Timestamp(args.end,
+                                                            tz=candles.index.tz)]
+        if len(candles) >= args.min_bars:
+            data[symbol.code] = candles
+    if not data:
+        print(f"{args.root} 에 쓸 만한 캔들이 없습니다.", file=sys.stderr)
+        return 1
+
+    first = min(d.index[0] for d in data.values())
+    last = max(d.index[-1] for d in data.values())
+    print(f"종목 {len(data)}  {first.date()} ~ {last.date()} "
+          f"({(last - first).days / 365.25:.1f}년)  비용 {args.cost_bps}bp")
+
+    found = detect(data, PATTERNS)
+    labels = {n: ("유명" if n in FAMOUS_PATTERNS else "덜알려짐") for n in PATTERNS}
+    table = score(found, data, holding_days=args.holding, cost_bps=args.cost_bps,
+                  labels=labels)
+    pd.set_option("display.width", 200)
+    view = table.copy()
+    view["연초과"] = view["연초과"].map(lambda v: "-" if pd.isna(v) else f"{v:+.2%}")
+    view["t"] = view["t"].map(lambda v: "-" if pd.isna(v) else f"{v:.2f}")
+    print(f"\n패턴 {table.attrs['n_hypotheses']}종 동시 검정 "
+          f"→ 필요 |t| >= {table.attrs['threshold']:.2f}")
+    print(view.to_string(index=False))
+    print(f"통과 {(table['판정'] == '통과').sum()} / "
+          f"{(table['판정'] != '표본부족').sum()}")
+
+    print(f"\n== {args.periods}구간 분할 ==")
+    ranked = [r["패턴"] for _, r in table.iterrows() if r["판정"] != "표본부족"]
+    for name in ranked[:args.top]:
+        out = subperiods(found[name], data, periods=args.periods,
+                         holding_days=args.holding, cost_bps=args.cost_bps)
+        cells = " ".join("  n/a " if pd.isna(v) else f"{v:+6.1%}"
+                         for v in out["표"]["연초과"])
+        print(f"  {name:28s} {cells}   {out['승']}승{out['패']}패  p={out['p']:.4f}")
+        if name == ranked[0]:
+            print(f"  (구간 {args.periods}개의 최소 가능 p = {out['min_p']:.4f} — "
+                  f"이보다 작은 p 는 나올 수 없다)")
+    return 0
+
+
 def cmd_probe_toss(args: argparse.Namespace) -> int:
     """브라우저에서 복사한 요청으로 토스 캔들 엔드포인트를 확정한다."""
     from .datasource.toss import TossApiError, TossClient, parse_candles, save_session
@@ -641,6 +695,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--min-trades", type=int, default=200)
     p.add_argument("--top", type=int, default=25)
     p.set_defaults(func=cmd_swing)
+
+    p = sub.add_parser("pattern-lab", help="차트 패턴 전종 검증 (다중검정 + 구간 분할)")
+    p.add_argument("--root", default="data_wide")
+    p.add_argument("--interval", default="1d", choices=[i.value for i in Interval])
+    p.add_argument("--end", default="2025-12-31", help="이 날짜까지만 (기본: 2026년 제외)")
+    p.add_argument("--holding", type=int, default=60)
+    p.add_argument("--cost-bps", type=float, default=28.0)
+    p.add_argument("--min-bars", type=int, default=600)
+    p.add_argument("--periods", type=int, default=8)
+    p.add_argument("--top", type=int, default=5)
+    p.set_defaults(func=cmd_pattern_lab)
 
     p = sub.add_parser("probe-toss", help="브라우저 요청으로 토스 캔들 엔드포인트 확정")
     p.add_argument("--curl", default=None,
