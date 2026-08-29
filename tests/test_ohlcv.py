@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -76,6 +77,16 @@ def test_repair_tick_allowance_scales_with_price_band():
 
     price = pd.Series([500.0, 3_000.0, 30_000.0, 300_000.0])
     assert list(tick_size(price)) == [1.0, 5.0, 50.0, 500.0]
+
+
+def test_tick_size_leaves_missing_prices_missing():
+    """결측 가격에 기본 틱을 채우면 통계가 조용히 오염된다."""
+    from tsignal.ohlcv import tick_size
+
+    out = tick_size(pd.Series([np.nan, 36_500.0, np.nan]))
+    assert pd.isna(out.iloc[0]) and pd.isna(out.iloc[2])
+    assert out.iloc[1] == 50.0
+    assert out.median() == 50.0
 
 
 def test_repair_rejects_a_gap_far_beyond_a_few_ticks():

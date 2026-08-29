@@ -86,7 +86,9 @@ TICK_BANDS = (
 def tick_size(price: pd.Series) -> pd.Series:
     """가격대별 호가 단위. 수정주가라 실제 틱과 정확히 맞지는 않지만,
     "반올림 오차가 가격에 비례하지 않는다"는 성질을 담기에는 충분하다."""
-    out = pd.Series(1.0, index=price.index)
+    # 결측 가격에는 틱이 없다. 기본값 1원을 남기면 "1원짜리 틱"이 섞여
+    # 통계를 왜곡한다 (실측: 36,500원 종목의 중앙 틱이 1원으로 보고됐다).
+    out = pd.Series(np.nan, index=price.index, dtype="float64")
     lower = 0.0
     for upper, tick in TICK_BANDS:
         out = out.mask((price >= lower) & (price < upper), float(tick))
