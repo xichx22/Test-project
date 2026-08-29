@@ -134,3 +134,54 @@ def test_catalog_codes_are_unique_and_named():
     assert spec_for("069500").taxable is False   # 국내주식형은 매매차익 비과세
     assert spec_for("133690").taxable is True
     assert spec_for("000000") is None
+
+
+def test_pension_beats_taxable_and_the_gap_widens():
+    """세액공제 재투자 + 과세이연이 쌓이면 기간이 길수록 격차가 벌어진다."""
+    from tsignal.evaluation.portfolio import contribution_plan
+
+    short = contribution_plan(annual_return=0.0972, years=10)
+    long = contribution_plan(annual_return=0.0972, years=30)
+    assert short.iloc[-1]["차이"] > 0
+    ratio_short = short.iloc[-1]["차이"] / short.iloc[-1]["일반계좌"]
+    ratio_long = long.iloc[-1]["차이"] / long.iloc[-1]["일반계좌"]
+    assert ratio_long > ratio_short
+
+
+def test_contribution_plan_tracks_principal():
+    from tsignal.evaluation.portfolio import contribution_plan
+
+    table = contribution_plan(annual_return=0.05, years=5, yearly=1_000_000)
+    assert list(table["누적납입"]) == [1_000_000 * n for n in range(1, 6)]
+    assert table["연금계좌(인출후)"].is_monotonic_increasing
+
+
+def test_exit_tax_reduces_the_pension_advantage():
+    from tsignal.evaluation.portfolio import contribution_plan
+
+    light = contribution_plan(annual_return=0.0972, years=20, exit_tax=0.033)
+    heavy = contribution_plan(annual_return=0.0972, years=20, exit_tax=0.055)
+    assert light.iloc[-1]["차이"] > heavy.iloc[-1]["차이"]
+
+
+def test_zero_deduction_leaves_only_the_tax_drag():
+    """세액공제를 0 으로 두면 남는 우위는 운용 중 과세이연뿐이어야 한다."""
+    from tsignal.evaluation.portfolio import contribution_plan
+
+    table = contribution_plan(annual_return=0.0972, years=20,
+                              deduction=0.0, exit_tax=0.0)
+    assert 0 < table.iloc[-1]["차이"]
+    # 세액공제가 있을 때보다는 훨씬 작아야 한다
+    full = contribution_plan(annual_return=0.0972, years=20, exit_tax=0.0)
+    assert table.iloc[-1]["차이"] < full.iloc[-1]["차이"] / 3
+
+
+def test_edge_ranking_puts_the_deduction_on_top():
+    """이 프로젝트가 잰 것 중 가장 큰 항목은 매매 규칙이 아니다."""
+    from tsignal.evaluation.portfolio import edge_ranking
+
+    table = edge_ranking()
+    assert "세액공제" in table.iloc[0]["항목"]
+    assert table["연 기여"].is_monotonic_decreasing
+    unverified = table[table["성격"] == "미검증"]["연 기여"]
+    assert (unverified < table.iloc[0]["연 기여"]).all()

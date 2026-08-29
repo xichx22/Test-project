@@ -272,3 +272,85 @@ def horizon_gap(drag: float, base_cagr: float, years: tuple[int, ...] = (10, 20,
         rows.append({"기간": f"{year}년", "연금계좌": high, "일반계좌": low,
                      "차이": high - low})
     return pd.DataFrame(rows)
+
+
+# 연금계좌 세액공제 (2026년 기준)
+PENSION_LIMIT = 9_000_000          # 연금저축 600 + IRP 300
+DEDUCTION_LOW = 0.165              # 총급여 5,500만원 이하 (지방소득세 포함)
+DEDUCTION_HIGH = 0.132             # 초과
+PENSION_EXIT_TAX = 0.055           # 연금소득세 3.3~5.5%, 보수적으로 상단
+
+
+def contribution_plan(
+    *,
+    annual_return: float,
+    years: int,
+    yearly: float = PENSION_LIMIT,
+    deduction: float = DEDUCTION_LOW,
+    exit_tax: float = PENSION_EXIT_TAX,
+    taxable_drag: float = 0.0044,
+) -> pd.DataFrame:
+    """연금계좌 vs 일반계좌 — 매년 같은 금액을 넣었을 때 최종 수령액.
+
+    왜 이 계산이 백테스트보다 중요한가
+    ----------------------------------
+    이 프로젝트가 찾아낸 어떤 매매 규칙도 연 몇 %p 를 다투는 수준이었다.
+    세액공제는 납입한 해에 **확정적으로 16.5%** 를 돌려준다. 시장이 어떻든,
+    전략이 맞든 틀리든 받는다. 크기가 다른 항목이다.
+
+    모형
+    ----
+    연금계좌: 매년 `yearly` 납입 → 그 해 `deduction` 만큼 환급받아 **재투자**.
+              운용 중 과세 없음. 인출 시 전액에 `exit_tax`.
+    일반계좌: 매년 `yearly` 납입. 리밸런싱 과세로 수익률이 `taxable_drag` 만큼
+              낮다 (실측 연 0.44%p). 인출 시 추가 과세 없음
+              (국내주식형 비과세분이 섞여 있어 보수적으로 0 으로 둔다).
+
+    일부러 뺀 것: 연금계좌의 55세 인출 제한과 중도해지 시 기타소득세 16.5%.
+    돈이 묶이는 비용은 숫자로 잴 수 없고 사람마다 다르다.
+    """
+    rows = []
+    pension = taxable = 0.0
+    for year in range(1, years + 1):
+        # 연금: 납입 + 작년치 환급 재투자
+        refund = yearly * deduction
+        pension = (pension + yearly + refund) * (1 + annual_return)
+        taxable = (taxable + yearly) * (1 + annual_return - taxable_drag)
+        rows.append({
+            "연차": year,
+            "누적납입": yearly * year,
+            "연금계좌(세전)": pension,
+            "연금계좌(인출후)": pension * (1 - exit_tax),
+            "일반계좌": taxable,
+        })
+    frame = pd.DataFrame(rows)
+    frame["차이"] = frame["연금계좌(인출후)"] - frame["일반계좌"]
+    frame.attrs["deduction"] = deduction
+    frame.attrs["exit_tax"] = exit_tax
+    return frame
+
+
+def edge_ranking(annual_return: float = 0.0972) -> pd.DataFrame:
+    """이 프로젝트가 잰 것들을 **연 수익률 기여도**로 한 줄에 세운다.
+
+    매매 규칙을 찾느라 쓴 시간과, 계좌를 바꾸는 데 드는 시간의 크기 차이를
+    보이기 위한 표다. 세액공제는 납입액 기준이라 다른 항목과 단위가 다르므로,
+    900만원을 넣었을 때 그 900만원에 대한 1년 수익률로 환산해 비교한다.
+    """
+    rows = [
+        {"항목": "연금계좌 세액공제 (총급여 5,500만원 이하)",
+         "연 기여": DEDUCTION_LOW, "성격": "확정", "근거": "세법"},
+        {"항목": "연금계좌 세액공제 (초과)",
+         "연 기여": DEDUCTION_HIGH, "성격": "확정", "근거": "세법"},
+        {"항목": "6자산 동일가중 분기리밸 (실측)",
+         "연 기여": annual_return, "성격": "시장", "근거": "9.7년 백테스트"},
+        {"항목": "리밸런싱 자체의 기여 (분기 vs 방치)",
+         "연 기여": -0.0166, "성격": "시장", "근거": "10.72% vs 12.38%"},
+        {"항목": "일반계좌 세금 드래그",
+         "연 기여": -0.0044, "성격": "확정", "근거": "실측"},
+        {"항목": "플랫베이스 패턴 매매 (편향 보정 후)",
+         "연 기여": 0.0198, "성격": "미검증", "근거": "p=0.73"},
+        {"항목": "달러 ETF 유동성 잘못 고른 비용",
+         "연 기여": -0.005, "성격": "확정", "근거": "호가 스프레드 추정"},
+    ]
+    return pd.DataFrame(rows).sort_values("연 기여", ascending=False)
