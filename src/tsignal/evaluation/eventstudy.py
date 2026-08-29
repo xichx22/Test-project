@@ -141,6 +141,77 @@ def calendar_time_portfolio(
     return CalendarTimeResult(portfolio, positions, holding_days, n_events)
 
 
+def swing_portfolio(
+    events_by_code,
+    candles_by_code,
+    *,
+    holding_days: int = 60,
+    cost_bps: float = 28.0,
+    cash_rate: float = 0.02,
+    max_positions: int | None = None,
+    risk_free: float = 0.02,
+):
+    """이벤트 → **실제 투자 가능한** 자산가치 곡선.
+
+    `calendar_time_portfolio` 는 초과수익(시장 대비)을 재므로 "이 신호에 알파가
+    있는가"를 답한다. 반면 실제로 돈을 굴렸을 때의 꾸준함 — 롤링 12개월 양수율,
+    최장 무회복 기간 — 을 재려면 **원시 수익률**로 된 자산가치 곡선이 필요하다.
+
+    규칙
+      - 신호 봉 다음 날부터 holding_days 동안 보유 (다른 곳과 같은 체결 가정)
+      - 보유 종목은 동일가중, 신호가 없는 날은 전액 현금
+      - 매수·매도 시 왕복 비용을 진입일에 한 번에 차감 (보수적)
+      - max_positions 를 주면 동시 보유를 제한한다 (자금 한도 반영)
+
+    `allocation.BacktestResult` 를 돌려주므로 자산배분 전략과 같은 잣대로 비교된다.
+    """
+    from .allocation import BacktestResult
+
+    returns, held, entries = {}, {}, {}
+    for code, candles in candles_by_code.items():
+        series = events_by_code.get(code)
+        if series is None or not series.any():
+            continue
+        returns[code] = candles["close"].pct_change()
+        entered = (
+            series.reindex(candles.index).fillna(False).astype(bool)
+            .shift(1, fill_value=False).astype(bool)
+        )
+        entries[code] = entered
+        held[code] = entered.rolling(holding_days, min_periods=1).max().astype(bool)
+
+    if not returns:
+        empty = pd.Series(dtype=float)
+        return BacktestResult("스윙(신호없음)", empty, empty, empty, 0, risk_free=risk_free)
+
+    ret = pd.DataFrame(returns).sort_index()
+    hold = pd.DataFrame(held).reindex(index=ret.index, columns=ret.columns).fillna(False).astype(bool)
+    ent = pd.DataFrame(entries).reindex(index=ret.index, columns=ret.columns).fillna(False).astype(bool)
+
+    if max_positions:
+        # 한도를 넘으면 먼저 진입한 종목을 우선한다 (컬럼 순서로 결정론적)
+        rank = hold.cumsum(axis=1)
+        hold = hold & (rank <= max_positions)
+
+    count = hold.sum(axis=1)
+    invested = count > 0
+    # 보유 종목 동일가중 수익. 보유가 없으면 현금.
+    gross = (ret.where(hold).sum(axis=1) / count.replace(0, np.nan)).fillna(0.0)
+    cash_daily = (1 + cash_rate) ** (1 / 252) - 1
+    daily = np.where(invested, gross, cash_daily)
+
+    # 진입 비중만큼 왕복 비용을 그날 차감
+    new_share = (ent & hold).sum(axis=1) / count.replace(0, np.nan)
+    daily = daily - new_share.fillna(0.0).to_numpy() * (cost_bps / 10_000.0)
+
+    series = pd.Series(daily, index=ret.index)
+    equity = (1 + series).cumprod()
+    weight = invested.astype(float)
+    trades = int(ent.sum().sum())
+    name = f"스윙 {holding_days}일보유"
+    return BacktestResult(name, equity, weight, series, trades, risk_free=risk_free)
+
+
 def compare_holdings(
     events_by_code: Mapping[str, pd.Series],
     candles_by_code: Mapping[str, pd.DataFrame],

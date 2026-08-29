@@ -250,3 +250,65 @@ def test_new_patterns_are_causal():
         full = fn(candles)
         truncated = fn(candles.iloc[:600])
         assert full.iloc[:600].equals(truncated), f"{name} 이 미래를 보고 있다"
+
+
+# =====================================================================
+# 스윙 포트폴리오 — 초과수익이 아니라 실제 자산가치 곡선
+# =====================================================================
+
+from tsignal.evaluation.eventstudy import swing_portfolio  # noqa: E402
+
+
+def test_swing_portfolio_holds_cash_when_no_signal():
+    """신호가 없는 날은 전액 현금이어야 한다."""
+    source = SyntheticDataSource(seed=21)
+    data = {c: source.candles(c, Interval.D1, count=400) for c in ("AAA", "BBB")}
+    index = data["AAA"].index
+    events = {c: pd.Series(False, index=index) for c in data}
+    events["AAA"].iloc[100] = True
+
+    result = swing_portfolio(events, data, holding_days=20, cost_bps=0.0, cash_rate=0.0)
+    assert result.exposure < 0.15                    # 20/400 근처
+    # 보유하지 않는 구간은 현금이므로 수익률이 0 이다.
+    assert result.daily[~result.weight.astype(bool)].abs().max() == pytest.approx(0.0, abs=1e-12)
+
+
+def test_swing_portfolio_equal_weights_open_positions():
+    """동시 보유 종목은 동일가중이다."""
+    source = SyntheticDataSource(seed=22)
+    data = {c: source.candles(c, Interval.D1, count=300) for c in ("AAA", "BBB")}
+    index = data["AAA"].index
+    events = {c: pd.Series(False, index=index) for c in data}
+    for c in data:
+        events[c].iloc[50] = True
+
+    result = swing_portfolio(events, data, holding_days=30, cost_bps=0.0, cash_rate=0.0)
+    day = index[60]
+    expected = np.mean([data[c]["close"].pct_change().loc[day] for c in data])
+    assert result.daily.loc[day] == pytest.approx(expected, rel=1e-9)
+
+
+def test_swing_portfolio_charges_entry_costs():
+    source = SyntheticDataSource(seed=23)
+    data = {"AAA": source.candles("AAA", Interval.D1, count=300)}
+    events = {"AAA": pd.Series(False, index=data["AAA"].index)}
+    events["AAA"].iloc[50] = True
+
+    free = swing_portfolio(events, data, holding_days=30, cost_bps=0.0)
+    charged = swing_portfolio(events, data, holding_days=30, cost_bps=100.0)
+    assert charged.equity.iloc[-1] < free.equity.iloc[-1]
+    assert charged.trades == 1
+
+
+def test_swing_portfolio_respects_position_limit():
+    source = SyntheticDataSource(seed=24)
+    codes = [f"S{i}" for i in range(6)]
+    data = {c: source.candles(c, Interval.D1, count=300) for c in codes}
+    index = data[codes[0]].index
+    events = {c: pd.Series(False, index=index) for c in codes}
+    for c in codes:
+        events[c].iloc[50] = True
+
+    limited = swing_portfolio(events, data, holding_days=30, max_positions=2, cost_bps=0.0)
+    full = swing_portfolio(events, data, holding_days=30, cost_bps=0.0)
+    assert limited.daily.std() >= full.daily.std()    # 덜 분산되므로 변동성이 크다
