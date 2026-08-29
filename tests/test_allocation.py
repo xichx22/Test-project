@@ -161,3 +161,77 @@ def test_no_rebalance_lets_weights_drift():
     drifting = static_mix({"a": risky, "b": safe}, {"a": 0.6, "b": 0.4},
                           rebalance=None, one_way_bps=0.0)
     assert drifting.trades == 0
+
+
+# =====================================================================
+# 꾸준함 척도 — 샤프가 답하지 못하는 질문
+# =====================================================================
+
+from tsignal.evaluation.allocation import risk_parity  # noqa: E402
+
+
+def test_rolling_positive_measures_consistency():
+    """단조 상승이면 롤링 수익이 항상 양수여야 한다."""
+    idx = pd.bdate_range("2010-01-01", periods=1200, tz="Asia/Seoul")
+    rising = pd.Series(100 * 1.0004 ** np.arange(1200), index=idx)
+    result = buy_and_hold(rising, one_way_bps=0.0)
+    assert result.rolling_positive(12) == pytest.approx(1.0)
+    assert result.worst_rolling(12) > 0
+
+
+def test_longest_underwater_counts_days_not_depth():
+    """낙폭의 '깊이'가 아니라 '길이'를 센다.
+
+    3년간 원금 회복을 못 하는 것이 한 달 만에 -30% 를 겪고 회복하는 것보다
+    견디기 어렵다 — MDD 는 그 차이를 못 잡는다.
+    """
+    idx = pd.bdate_range("2010-01-01", periods=400, tz="Asia/Seoul")
+    values = np.concatenate([np.full(50, 100.0), np.full(300, 90.0), np.full(50, 110.0)])
+    result = buy_and_hold(pd.Series(values, index=idx), cash_rate=0.0, one_way_bps=0.0)
+    assert 295 <= result.longest_underwater_days <= 305
+
+
+def test_ulcer_index_penalises_long_shallow_drawdowns():
+    """같은 MDD 라도 오래 잠겨 있으면 궤양지수가 커진다."""
+    idx = pd.bdate_range("2010-01-01", periods=600, tz="Asia/Seoul")
+    quick = np.concatenate([np.full(50, 100.0), np.full(10, 90.0), np.full(540, 100.0)])
+    slow = np.concatenate([np.full(50, 100.0), np.full(500, 90.0), np.full(50, 100.0)])
+    a = buy_and_hold(pd.Series(quick, index=idx), cash_rate=0.0, one_way_bps=0.0)
+    b = buy_and_hold(pd.Series(slow, index=idx), cash_rate=0.0, one_way_bps=0.0)
+    assert a.max_drawdown == pytest.approx(b.max_drawdown, abs=1e-9)   # 깊이는 같다
+    assert b.ulcer_index > a.ulcer_index * 3                            # 길이가 다르다
+
+
+def test_sortino_ignores_upside_volatility():
+    """상승 변동성에는 벌점을 주지 않는다 — 샤프와 갈리는 지점."""
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("2010-01-01", periods=1500, tz="Asia/Seoul")
+    base = rng.normal(0.0005, 0.008, 1500)
+    spiky = base.copy()
+    spiky[::50] += 0.05                                   # 상승만 뾰족하게
+    a = buy_and_hold(pd.Series(100 * np.cumprod(1 + base), index=idx), one_way_bps=0.0)
+    b = buy_and_hold(pd.Series(100 * np.cumprod(1 + spiky), index=idx), one_way_bps=0.0)
+    assert b.sortino > a.sortino                          # 소르티노는 보상한다
+    assert b.sortino - a.sortino > b.sharpe - a.sharpe     # 샤프보다 더 후하게
+
+
+def test_risk_parity_gives_low_volatility_assets_more_weight():
+    """변동성 역가중이므로 조용한 자산이 큰 비중을 받는다."""
+    rng = np.random.default_rng(5)
+    idx = pd.bdate_range("2010-01-01", periods=900, tz="Asia/Seoul")
+    loud = pd.Series(100 * np.cumprod(1 + rng.normal(0.0004, 0.020, 900)), index=idx)
+    quiet = pd.Series(100 * np.cumprod(1 + rng.normal(0.0002, 0.002, 900)), index=idx)
+
+    result = risk_parity({"loud": loud, "quiet": quiet}, window=120, one_way_bps=0.0)
+    assert result.weight.mean() < 0.3                     # loud 비중이 작아야 한다
+    assert result.volatility < buy_and_hold(loud, one_way_bps=0.0).volatility
+
+
+def test_consistency_summary_has_the_right_fields():
+    rng = np.random.default_rng(9)
+    idx = pd.bdate_range("2010-01-01", periods=1600, tz="Asia/Seoul")
+    prices = pd.Series(100 * np.cumprod(1 + rng.normal(0.0004, 0.010, 1600)), index=idx)
+    summary = buy_and_hold(prices).consistency()
+    assert {"12개월 양수율", "36개월 양수율", "최악의12개월%",
+            "최장무회복일", "궤양지수", "소르티노"} <= set(summary)
+    assert 0 <= summary["12개월 양수율"] <= 1

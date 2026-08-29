@@ -82,6 +82,67 @@ class BacktestResult:
         """시장에 노출된 시간 비율."""
         return float(self.weight.mean())
 
+    def rolling_positive(self, months: int = 12) -> float:
+        """롤링 N개월 수익이 양수인 비율.
+
+        "꾸준함"의 가장 직접적인 척도다. 언제 들어갔든 N개월 뒤 플러스일 확률.
+        샤프와 다르다 — 샤프는 상승 변동성에도 벌점을 주지만, 투자자가 못 견디는
+        것은 상승이 아니라 **오래 마이너스에 잠겨 있는 것**이다.
+        """
+        window = int(months * 21)
+        if len(self.equity) <= window:
+            return np.nan
+        forward = self.equity.shift(-window) / self.equity - 1
+        return float((forward.dropna() > 0).mean())
+
+    def worst_rolling(self, months: int = 12) -> float:
+        window = int(months * 21)
+        if len(self.equity) <= window:
+            return np.nan
+        return float((self.equity.shift(-window) / self.equity - 1).min())
+
+    @property
+    def longest_underwater_days(self) -> int:
+        """직전 고점을 회복하기까지 걸린 최장 기간(거래일).
+
+        낙폭의 '깊이'가 아니라 '길이'다. 3년간 원금 회복을 못 하는 것이
+        한 달 만에 -30% 를 겪고 회복하는 것보다 견디기 어렵다.
+        """
+        underwater = self.equity < self.equity.cummax()
+        longest = current = 0
+        for flag in underwater:
+            current = current + 1 if flag else 0
+            longest = max(longest, current)
+        return int(longest)
+
+    @property
+    def ulcer_index(self) -> float:
+        """낙폭의 깊이와 지속을 함께 재는 지표. 낮을수록 편안하다."""
+        drawdown = (self.equity / self.equity.cummax() - 1) * 100
+        return float(np.sqrt((drawdown**2).mean()))
+
+    @property
+    def sortino(self) -> float:
+        """하방 변동성만으로 나눈 수익. 상승 변동성에는 벌점을 주지 않는다."""
+        downside = self.daily[self.daily < 0]
+        if len(downside) < 2:
+            return np.nan
+        dd = downside.std(ddof=1) * np.sqrt(252)
+        return float((self.cagr - self.risk_free) / dd) if dd > 0 else np.nan
+
+    def consistency(self) -> dict[str, float]:
+        """꾸준함 중심 요약. CAGR 이 아니라 이쪽을 보고 고른다."""
+        return {
+            "CAGR%": self.cagr * 100,
+            "12개월 양수율": self.rolling_positive(12),
+            "36개월 양수율": self.rolling_positive(36),
+            "최악의12개월%": self.worst_rolling(12) * 100,
+            "최장무회복일": self.longest_underwater_days,
+            "궤양지수": self.ulcer_index,
+            "소르티노": self.sortino,
+            "MDD%": self.max_drawdown * 100,
+        }
+
     @property
     def worst_year(self) -> float:
         yearly = self.equity.resample("YE").last().pct_change().dropna()
@@ -285,6 +346,54 @@ def static_mix(
     weight_series = pd.Series(float(target[0]), index=returns.index)
     return BacktestResult(label, equity, weight_series, series, len(turnover_log),
                           risk_free=risk_free)
+
+
+def risk_parity(
+    assets: dict[str, pd.Series],
+    *,
+    window: int = 120,
+    rebalance: str = "ME",
+    one_way_bps: float = ETF_ONE_WAY_BPS,
+    risk_free: float = 0.02,
+) -> BacktestResult:
+    """위험 파리티 — 각 자산이 **같은 크기의 위험**을 지도록 변동성 역가중.
+
+    고정 비중(예: 60/40)은 금액을 나눌 뿐이라 위험은 주식이 대부분 진다.
+    주식 변동성 22%, 채권 2% 면 60/40 포트폴리오 위험의 98% 가 주식에서 온다.
+    변동성의 역수로 가중하면 자산마다 위험 기여가 같아져 한 자산의 부진에
+    포트폴리오가 휘둘리지 않는다 — 꾸준함을 노린다면 이쪽이 자연스럽다.
+
+    수익률 예측을 전혀 하지 않는다는 점은 고정 비중과 같다.
+    """
+    frame = pd.DataFrame(assets).dropna()
+    returns = frame.pct_change()
+    vol = returns.rolling(window, min_periods=window).std(ddof=0)
+    inverse = (1.0 / vol.replace(0, np.nan))
+    target = inverse.div(inverse.sum(axis=1), axis=0).dropna()
+    if target.empty:
+        raise ValueError("변동성 창이 데이터보다 깁니다.")
+
+    marks = set(frame.loc[target.index].resample(rebalance).last().index)
+    codes = list(frame.columns)
+    holding = target.iloc[0].to_numpy(dtype=float)
+    daily, trades = [], 0
+
+    for timestamp, row in returns.loc[target.index].iterrows():
+        grown = holding * (1 + np.nan_to_num(row.to_numpy()))
+        total = grown.sum()
+        daily.append(total - 1)
+        holding = grown / total if total > 0 else holding
+        if timestamp in marks:
+            want = target.loc[timestamp].to_numpy(dtype=float)
+            turnover = float(np.abs(want - holding).sum()) / 2
+            daily[-1] -= turnover * 2 * (one_way_bps / 10_000.0)
+            holding = want
+            trades += 1
+
+    series = pd.Series(daily, index=target.index)
+    equity = (1 + series).cumprod()
+    weights = pd.Series(target[codes[0]].to_numpy(), index=target.index)
+    return BacktestResult("위험파리티", equity, weights, series, trades, risk_free=risk_free)
 
 
 STRATEGIES: dict[str, Callable[..., BacktestResult]] = {
