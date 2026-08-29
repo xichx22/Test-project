@@ -135,7 +135,8 @@ def test_benchmark_uses_the_whole_universe():
 # =====================================================================
 
 from tsignal.signals.patterns import (  # noqa: E402
-    PATTERNS, ascending_triangle, bull_flag, double_bottom, flat_base,
+    FAMOUS_PATTERNS, LESSER_KNOWN_PATTERNS, PATTERNS,
+    ascending_triangle, bull_flag, double_bottom, flat_base,
 )
 
 
@@ -233,9 +234,8 @@ def test_all_patterns_require_a_prior_uptrend():
 
 
 def test_pattern_registry_lists_every_detector():
-    assert set(PATTERNS) == {
-        "cup_with_handle", "double_bottom", "flat_base", "bull_flag", "ascending_triangle",
-    }
+    assert set(PATTERNS) == set(FAMOUS_PATTERNS) | set(LESSER_KNOWN_PATTERNS)
+    assert not set(FAMOUS_PATTERNS) & set(LESSER_KNOWN_PATTERNS)
     source = SyntheticDataSource(seed=13)
     candles = source.candles("AAA", Interval.D1, count=500)
     for name, fn in PATTERNS.items():
@@ -312,3 +312,208 @@ def test_swing_portfolio_respects_position_limit():
     limited = swing_portfolio(events, data, holding_days=30, max_positions=2, cost_bps=0.0)
     full = swing_portfolio(events, data, holding_days=30, cost_bps=0.0)
     assert limited.daily.std() >= full.daily.std()    # 덜 분산되므로 변동성이 크다
+
+
+# =====================================================================
+# 추가 패턴 6종 — 유명한 것 2, 덜 알려진 것 4
+#
+# 검출기는 반드시 세 가지를 통과해야 한다:
+#   1. 교과서 모양에서 잡힌다        (안 잡히면 백테스트 결과가 무의미하다)
+#   2. 비슷하지만 다른 모양은 기각한다 (안 그러면 그냥 아무 상승을 잡는 것)
+#   3. 랜덤워크에서 드물다            (흔하면 '패턴'이라 부를 근거가 없다)
+# =====================================================================
+
+def _bars(close, volume=None, high=None, low=None):
+    close = np.asarray(close, float)
+    n = len(close)
+    index = pd.date_range("2018-01-01", periods=n, freq="B", tz="Asia/Seoul")
+    return pd.DataFrame(
+        {"open": close,
+         "high": close * 1.005 if high is None else np.asarray(high, float),
+         "low": close * 0.995 if low is None else np.asarray(low, float),
+         "close": close,
+         "volume": np.full(n, 1000.0) if volume is None else np.asarray(volume, float)},
+        index=index,
+    )
+
+
+def _seg(a, b, n):
+    return np.linspace(a, b, n, endpoint=False)
+
+
+def _spike(n, level=1000.0, last=4000.0):
+    return np.r_[np.full(n - 1, level), [last]]
+
+
+def _inverse_hs_shape():
+    """앞선 하락 → 왼어깨 · 머리 · 오른어깨 → 넥라인 돌파."""
+    prior = _seg(100, 80, 70)
+    body = np.r_[_seg(80, 65, 20), _seg(65, 78, 20), _seg(78, 55, 20),
+                 _seg(55, 78, 20), _seg(78, 66, 20), _seg(66, 77, 20)]
+    close = np.r_[prior, body, [82.0]]
+    return _bars(close, _spike(len(close)))
+
+
+def _falling_wedge_shape():
+    """고점선·저점선이 **둘 다** 내려오면서 수렴한다."""
+    prior = _seg(60, 110, 70)
+    i = np.arange(60)
+    upper, lower = 110 - 14 * i / 59, 96 - 2 * i / 59
+    zig = np.where(i % 2 == 0, upper, lower)
+    zig[-1] = lower[-1]
+    close = np.r_[prior, zig, [108.0]]
+    return _bars(close, _spike(len(close)))
+
+
+def _vcp_shape():
+    """조정이 22% → 13% → 6% 로 얕아지고 거래량이 마른다."""
+    prior = _seg(60, 100, 70)
+    legs, top = [], 100.0
+    for depth, length in ((0.22, 27), (0.13, 27), (0.06, 26)):
+        low = top * (1 - depth)
+        legs.append(np.r_[_seg(top, low, length // 2),
+                          _seg(low, top * 0.995, length - length // 2)])
+    close = np.r_[prior, np.concatenate(legs), [104.0]]
+    volume = np.r_[np.full(70, 4000.0), np.full(27, 4000.0), np.full(27, 3000.0),
+                   np.full(26, 1500.0), [12000.0]]
+    return _bars(close, volume[:len(close)])
+
+
+def _high_tight_flag_shape():
+    prior = _seg(50, 106, 42)                 # 112% 급등
+    flag = np.r_[_seg(106, 88, 10), _seg(88, 104, 10)]
+    close = np.r_[prior, flag, [110.0]]
+    return _bars(close, _spike(len(close)))
+
+
+def _nr7_shape():
+    close = np.array(list(_seg(80, 100, 60)) + [100.0, 103.0])
+    high, low = close * 1.005, close * 0.995
+    high[-2], low[-2] = 100.05, 99.95         # 최근 7봉 중 가장 좁은 봉
+    high[-1], low[-1] = 103.5, 100.1
+    return _bars(close, _spike(len(close)), high, low)
+
+
+def _pocket_pivot_shape():
+    close = np.r_[_seg(80, 96, 60), [95.0], [96.5]]
+    volume = np.r_[np.full(60, 1000.0), [3000.0], [9000.0]]
+    return _bars(close, volume)
+
+
+TEXTBOOK = {
+    "inverse_head_and_shoulders": _inverse_hs_shape,
+    "falling_wedge": _falling_wedge_shape,
+    "volatility_contraction": _vcp_shape,
+    "high_tight_flag": _high_tight_flag_shape,
+    "nr7_breakout": _nr7_shape,
+    "pocket_pivot": _pocket_pivot_shape,
+}
+
+
+@pytest.mark.parametrize("name", sorted(TEXTBOOK))
+def test_detector_fires_on_its_textbook_shape(name):
+    """정석 모양에서 안 잡히면 그 검출기로 낸 백테스트는 아무 의미가 없다.
+
+    처음 작성했을 때 6개 중 5개가 자기 교과서 모양에서 안 잡혔다.
+    """
+    from tsignal.signals.patterns import (
+    FAMOUS_PATTERNS, LESSER_KNOWN_PATTERNS, PATTERNS)
+
+    hit = PATTERNS[name](TEXTBOOK[name]())
+    assert bool(hit.iloc[-1]), f"{name} 이 정석 모양의 완성 봉을 잡지 못했다"
+
+
+def test_inverse_head_shoulders_rejects_a_plain_v():
+    """어깨가 없는 V자 반등은 역헤드앤숄더가 아니다."""
+    from tsignal.signals.patterns import inverse_head_and_shoulders
+
+    close = np.r_[_seg(100, 80, 70), _seg(80, 50, 60), _seg(50, 78, 60), [82.0]]
+    assert not inverse_head_and_shoulders(_bars(close, _spike(len(close)))).any()
+
+
+def test_falling_wedge_rejects_a_rising_wedge():
+    """두 선이 올라가면 하락쐐기가 아니다 — 방향 조건이 살아 있는지 본다."""
+    from tsignal.signals.patterns import falling_wedge
+
+    i = np.arange(60)
+    zig = np.where(i % 2 == 0, 96 + 14 * i / 59, 110 + 2 * i / 59)
+    close = np.r_[_seg(60, 96, 70), zig, [118.0]]
+    assert not falling_wedge(_bars(close, _spike(len(close)))).iloc[-1]
+
+
+def test_vcp_rejects_widening_pullbacks():
+    """조정이 깊어지는 형태는 '변동성 수축'의 반대다."""
+    from tsignal.signals.patterns import volatility_contraction
+
+    legs, top = [], 100.0
+    for depth, length in ((0.06, 27), (0.13, 27), (0.22, 26)):
+        low = top * (1 - depth)
+        legs.append(np.r_[_seg(top, low, length // 2),
+                          _seg(low, top * 0.995, length - length // 2)])
+    close = np.r_[_seg(60, 100, 70), np.concatenate(legs), [104.0]]
+    volume = np.r_[np.full(len(close) - 1, 3000.0), [12000.0]]
+    assert not volatility_contraction(_bars(close, volume)).iloc[-1]
+
+
+def test_high_tight_flag_needs_an_actual_run():
+    """급등이 없으면 '하이 타이트'가 아니다."""
+    from tsignal.signals.patterns import high_tight_flag
+
+    close = np.r_[_seg(50, 60, 42), _seg(60, 55, 10), _seg(55, 59, 10), [62.0]]
+    assert not high_tight_flag(_bars(close, _spike(len(close)))).iloc[-1]
+
+
+def test_nr7_needs_the_previous_bar_to_be_the_narrowest():
+    from tsignal.signals.patterns import nr7_breakout
+
+    close = np.array(list(_seg(80, 100, 60)) + [100.0, 103.0])
+    high, low = close * 1.005, close * 0.995
+    high[-2], low[-2] = 105.0, 95.0           # 직전 봉이 가장 **넓다**
+    high[-1], low[-1] = 103.5, 100.1
+    assert not nr7_breakout(_bars(close, _spike(len(close)), high, low)).iloc[-1]
+
+
+def test_pocket_pivot_needs_volume_above_recent_down_bars():
+    from tsignal.signals.patterns import pocket_pivot
+
+    close = np.r_[_seg(80, 96, 60), [95.0], [96.5]]
+    volume = np.r_[np.full(60, 1000.0), [20000.0], [9000.0]]  # 하락봉이 더 크다
+    assert not pocket_pivot(_bars(close, volume)).iloc[-1]
+
+
+def test_envelope_lines_trace_the_outline_not_the_middle():
+    """포락선은 봉우리끼리·골끼리 이어야 한다.
+
+    모든 봉에 최소제곱을 걸면 지그재그 한가운데를 지나가서 상단선과
+    하단선이 거의 붙는다. 실측에서 수렴하는 쐐기의 폭 비율이 0.913 으로
+    나와 수축 조건을 통과하지 못했다.
+    """
+    from tsignal.signals.patterns import _envelope_lines
+
+    i = np.arange(60)
+    high = np.where(i % 2 == 0, 110 - 14 * i / 59, 100.0)
+    low = np.where(i % 2 == 0, 100.0, 96 - 2 * i / 59)
+    hi_slope, hi_base, lo_slope, lo_base = _envelope_lines(high, low)
+    width_start = hi_base - lo_base
+    width_end = (hi_base + hi_slope * 59) - (lo_base + lo_slope * 59)
+    assert width_start > width_end > 0, "수렴을 잡아내지 못했다"
+    assert width_end / width_start < 0.5
+
+
+@pytest.mark.parametrize("name,limit", [
+    ("inverse_head_and_shoulders", 0.5),
+    ("falling_wedge", 0.5),
+    ("volatility_contraction", 0.5),
+    ("high_tight_flag", 0.5),
+])
+def test_structural_patterns_are_rare_in_random_walks(name, limit):
+    """구조 패턴이 랜덤워크에서 흔하면 '패턴'이라 부를 근거가 없다."""
+    from tsignal.signals.patterns import PATTERNS
+
+    rng = np.random.default_rng(11)
+    total = 0
+    for _ in range(40):
+        close = 100 * np.exp(np.cumsum(rng.normal(0, 0.015, 800)))
+        volume = rng.integers(500, 5000, 800).astype(float)
+        total += int(PATTERNS[name](_bars(close, volume)).sum())
+    assert total / 40 < limit, f"{name} 이 랜덤워크에서 종목당 {total/40:.2f}회 나온다"

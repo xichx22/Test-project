@@ -291,6 +291,66 @@ def cup_with_handle_loose_signal(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
     return cup_with_handle_loose(c)
 
 
+@signal("inverse_head_and_shoulders", "pattern",
+        rationale="가장 널리 알려진 반전 패턴. 왼어깨-머리-오른어깨 세 저점을 만든 뒤 "
+                  "넥라인을 거래량과 함께 뚫으면 하락 추세가 끝났다는 가설.",
+        tags=("pattern", "famous", "reversal", "swing"))
+def inverse_head_and_shoulders_signal(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
+    from .patterns import inverse_head_and_shoulders
+
+    return inverse_head_and_shoulders(c)
+
+
+@signal("falling_wedge", "pattern",
+        rationale="고점도 저점도 내려오는데 폭이 좁아지는 형태. 매도 압력이 "
+                  "소진되는 중이라 상단을 뚫으면 방향이 바뀐다는 가설.",
+        tags=("pattern", "famous", "reversal", "swing"))
+def falling_wedge_signal(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
+    from .patterns import falling_wedge
+
+    return falling_wedge(c)
+
+
+@signal("volatility_contraction", "pattern",
+        rationale="미너비니 VCP. 조정이 갈수록 얕아지고 거래량이 마르는 것은 "
+                  "매도 물량이 소진되는 흔적이고, 그 뒤 돌파가 잘 간다는 가설.",
+        tags=("pattern", "lesser_known", "minervini", "swing"))
+def volatility_contraction_signal(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
+    from .patterns import volatility_contraction
+
+    return volatility_contraction(c)
+
+
+@signal("high_tight_flag", "pattern",
+        rationale="오닐이 '가장 드물지만 가장 강하다'고 한 형태. 짧은 기간 급등한 뒤 "
+                  "아주 얕게만 쉬면 매물이 없다는 뜻이라는 가설. 표본이 적다.",
+        tags=("pattern", "lesser_known", "oneil", "swing"))
+def high_tight_flag_signal(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
+    from .patterns import high_tight_flag
+
+    return high_tight_flag(c)
+
+
+@signal("nr7_breakout", "pattern",
+        rationale="크라벨 NR7. 변동성은 수축과 확장을 반복하므로, 최근 7봉 중 가장 "
+                  "좁았던 봉 다음의 확장 방향을 따라간다. 방향을 예측하지 않는다.",
+        tags=("pattern", "lesser_known", "crabel", "volatility"))
+def nr7_breakout_signal(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
+    from .patterns import nr7_breakout
+
+    return nr7_breakout(c)
+
+
+@signal("pocket_pivot", "pattern",
+        rationale="모랄레스·캐처의 파워 매수. 상승 봉 거래량이 최근 하락 봉들의 최대 "
+                  "거래량을 넘으면 기관이 매집 중이라는 가설. 돌파 전에 들어간다.",
+        tags=("pattern", "lesser_known", "volume", "swing"))
+def pocket_pivot_signal(c: pd.DataFrame, f: pd.DataFrame) -> pd.Series:
+    from .patterns import pocket_pivot
+
+    return pocket_pivot(c)
+
+
 # =====================================================================
 # 6. 청산 신호 (exit) — "언제 팔 것인가"의 후보들
 # =====================================================================

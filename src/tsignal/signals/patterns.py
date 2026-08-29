@@ -223,6 +223,35 @@ def _breakout(close: np.ndarray, volume: np.ndarray, avg_volume: np.ndarray,
     return close[t] > pivot >= close[t - 1]
 
 
+def _envelope_lines(seg_high: np.ndarray, seg_low: np.ndarray, blocks: int = 6):
+    """구간을 blocks 조각으로 나눠 각 조각의 고점/저점을 잇는 두 추세선.
+
+    모든 봉에 최소제곱을 걸면 안 된다. 지그재그의 **한가운데**를 지나가서
+    상단선과 하단선이 거의 같아지고, 실제로 수렴하는 쐐기도 폭 비율이
+    0.9 로 나온다 (실측). 차트에서 사람이 그리듯 봉우리끼리·골끼리 이어야
+    포락선이 된다.
+
+    반환: (고점선 기울기, 고점선 절편, 저점선 기울기, 저점선 절편) — x 는 봉 인덱스.
+    """
+    n = len(seg_high)
+    if n < blocks * 2:
+        return None
+    edges = np.linspace(0, n, blocks + 1).astype(int)
+    xs, tops, bottoms = [], [], []
+    for a, b in zip(edges[:-1], edges[1:]):
+        if b <= a:
+            continue
+        xs.append((a + b - 1) / 2)
+        tops.append(seg_high[a:b].max())
+        bottoms.append(seg_low[a:b].min())
+    if len(xs) < 3:
+        return None
+    xs = np.asarray(xs, dtype=float)
+    hi_slope, hi_base = np.polyfit(xs, np.asarray(tops, float), 1)
+    lo_slope, lo_base = np.polyfit(xs, np.asarray(bottoms, float), 1)
+    return hi_slope, hi_base, lo_slope, lo_base
+
+
 def _arrays(candles: pd.DataFrame, volume_window: int):
     high = candles["high"].to_numpy(float)
     low = candles["low"].to_numpy(float)
@@ -509,6 +538,7 @@ def ascending_triangle(
     return pd.Series(hit, index=candles.index, name="ascending_triangle")
 
 
+# 아래에 정의된 패턴들은 파일 끝에서 PATTERNS 에 추가된다 (정의 순서 때문).
 PATTERNS = {
     "cup_with_handle": lambda c: cup_with_handle(c),
     "double_bottom": double_bottom,
@@ -530,3 +560,370 @@ def cup_with_handle_loose(candles: pd.DataFrame) -> pd.Series:
         handle_upper_half=0.30, handle_volume_max=1.3,
         prior_gain=0.05, breakout_volume=1.10,
     ))
+
+
+# =====================================================================
+# 역헤드앤숄더 (Inverse Head and Shoulders) — 가장 유명한 반전 패턴
+# =====================================================================
+
+@dataclass(frozen=True)
+class InverseHeadShouldersParams:
+    """왼어깨 – 머리 – 오른어깨, 그리고 넥라인 돌파.
+
+    조건은 교과서(Edwards & Magee, Bulkowski)를 그대로 옮겼다. 이 데이터로
+    맞춘 값이 아니다. 특히 어깨 대칭 허용치와 머리 깊이는 문헌에서 흔히
+    쓰는 범위의 중간값을 골랐다.
+    """
+
+    window: int = 120           # 패턴 전체를 찾을 창
+    head_deeper: float = 0.03   # 머리가 두 어깨보다 최소 3% 낮아야
+    shoulder_gap: float = 0.15  # 두 어깨 저점 차이가 15% 안
+    min_separation: int = 8     # 저점끼리 최소 간격 (봉)
+    neckline_slope: float = 0.10  # 넥라인이 15% 넘게 기울면 형태가 아니다
+    volume_mult: float = 1.3
+    volume_window: int = 20
+    prior_window: int = 60
+    prior_gain: float = 0.05    # 반전 패턴이므로 '앞선 하락'을 본다 (음수 방향)
+
+
+def inverse_head_and_shoulders(
+    candles: pd.DataFrame,
+    params: InverseHeadShouldersParams = InverseHeadShouldersParams(),
+) -> pd.Series:
+    """역헤드앤숄더 완성 봉(넥라인 돌파)에 True.
+
+    구조 조건을 느슨하게 두면 아무 W 나 통과한다. 세 저점이 실제로
+    저점인지(양옆보다 낮은지), 머리가 가운데 있는지를 강제한다.
+    """
+    high, low, close, volume, avg = _arrays(candles, params.volume_window)
+    n = len(close)
+    out = np.zeros(n, dtype=bool)
+    if n < params.window + params.prior_window + 2:
+        return pd.Series(out, index=candles.index)
+
+    for t in range(params.prior_window + params.window, n):
+        start = t - params.window
+        seg_low = low[start:t]
+        if len(seg_low) < 3 * params.min_separation:
+            continue
+
+        # 세 구간으로 나눠 각 구간의 최저점을 어깨/머리 후보로 삼는다
+        third = len(seg_low) // 3
+        left_i = start + int(np.argmin(seg_low[:third]))
+        head_i = start + third + int(np.argmin(seg_low[third:2 * third]))
+        right_i = start + 2 * third + int(np.argmin(seg_low[2 * third:]))
+
+        if head_i - left_i < params.min_separation:
+            continue
+        if right_i - head_i < params.min_separation:
+            continue
+
+        left, head, right = low[left_i], low[head_i], low[right_i]
+        if not (head > 0 and left > 0 and right > 0):
+            continue
+        # 머리가 두 어깨보다 확실히 낮아야 한다
+        if head > min(left, right) * (1 - params.head_deeper):
+            continue
+        # 두 어깨는 서로 비슷한 높이여야 한다
+        if abs(left - right) / max(left, right) > params.shoulder_gap:
+            continue
+
+        # 넥라인 = 머리 양옆 반등 고점을 잇는 선
+        peak_left = high[left_i:head_i].max() if head_i > left_i else np.nan
+        peak_right = high[head_i:right_i].max() if right_i > head_i else np.nan
+        if not (np.isfinite(peak_left) and np.isfinite(peak_right)):
+            continue
+        if abs(peak_left - peak_right) / max(peak_left, peak_right) > params.neckline_slope:
+            continue
+        neckline = max(peak_left, peak_right)
+
+        # 반전 패턴이므로 앞선 하락을 확인한다
+        prior = start - params.prior_window
+        if prior < 0 or close[prior] <= 0:
+            continue
+        if close[start] / close[prior] - 1 > -params.prior_gain:
+            continue
+
+        if _breakout(close, volume, avg, t, neckline, params.volume_mult):
+            out[t] = True
+    return pd.Series(out, index=candles.index, name="inverse_head_and_shoulders")
+
+
+# =====================================================================
+# 하락쐐기 (Falling Wedge) — 고점도 저점도 내려오는데 수렴한다
+# =====================================================================
+
+@dataclass(frozen=True)
+class FallingWedgeParams:
+    window: int = 60
+    min_contraction: float = 0.4   # 뒤쪽 폭이 앞쪽의 40% 이하로 좁아져야
+    both_falling: float = 0.0      # 고점·저점 모두 하락 (기울기 < 0)
+    volume_mult: float = 1.3
+    volume_window: int = 20
+    prior_window: int = 60
+    prior_gain: float = 0.10
+
+
+def falling_wedge(
+    candles: pd.DataFrame,
+    params: FallingWedgeParams = FallingWedgeParams(),
+) -> pd.Series:
+    """하락쐐기 상단 돌파에 True.
+
+    삼각수렴과의 차이는 **두 선이 모두 아래로** 기운다는 것이다. 그 조건을
+    빼면 그냥 수렴 패턴이 되므로 반드시 강제한다.
+    """
+    high, low, close, volume, avg = _arrays(candles, params.volume_window)
+    n = len(close)
+    out = np.zeros(n, dtype=bool)
+    if n < params.window + params.prior_window + 2:
+        return pd.Series(out, index=candles.index)
+
+    x = np.arange(params.window, dtype=float)
+    for t in range(params.prior_window + params.window, n):
+        start = t - params.window
+        seg_high, seg_low = high[start:t], low[start:t]
+        if len(seg_high) < params.window:
+            continue
+
+        lines = _envelope_lines(seg_high, seg_low)
+        if lines is None:
+            continue
+        hi_slope, hi_base, lo_slope, lo_base = lines
+        span = x[:len(seg_high)]
+        if hi_slope >= params.both_falling or lo_slope >= params.both_falling:
+            continue
+        # 고점이 저점보다 빨리 내려와야 수렴한다
+        if hi_slope >= lo_slope:
+            continue
+
+        # 수축은 **두 추세선 사이 폭**으로 잰다. 구간 최고-최저로 재면
+        # 하락 드리프트가 폭에 섞여 들어가, 실제로 수렴하는 쐐기도
+        # 비율이 0.5 아래로 안 내려간다 (실측: 정석 모양에서 0.527).
+        width_start = hi_base - lo_base
+        width_end = (hi_base + hi_slope * span[-1]) - (lo_base + lo_slope * span[-1])
+        if width_start <= 0 or width_end <= 0:
+            continue
+        if width_end / width_start > params.min_contraction:
+            continue
+
+        half = len(seg_high) // 2
+
+        if not _prior_uptrend(close, start, params.prior_window, params.prior_gain):
+            continue
+        pivot = seg_high[half:].max()
+        if _breakout(close, volume, avg, t, pivot, params.volume_mult):
+            out[t] = True
+    return pd.Series(out, index=candles.index, name="falling_wedge")
+
+
+# =====================================================================
+# VCP — 변동성 수축 패턴 (Mark Minervini)
+# =====================================================================
+
+@dataclass(frozen=True)
+class VcpParams:
+    """조정이 갈수록 얕아지고 거래량이 마르다가 터진다.
+
+    미너비니가 대중화한 형태다. 핵심은 '조정 깊이가 단조 감소'라는 것 하나이고,
+    나머지는 그것을 재는 방식일 뿐이다.
+    """
+
+    window: int = 80
+    legs: int = 3               # 수축 구간을 몇 개로 나눠 볼 것인가
+    shrink: float = 0.75        # 다음 조정은 직전의 75% 이하여야
+    max_first_depth: float = 0.35
+    dry_up: float = 0.85        # 마지막 구간 거래량이 앞선 평균의 85% 이하
+    volume_mult: float = 1.5    # 돌파는 거래량이 크게 실려야
+    volume_window: int = 50
+    prior_window: int = 60
+    prior_gain: float = 0.15
+
+
+def volatility_contraction(
+    candles: pd.DataFrame,
+    params: VcpParams = VcpParams(),
+) -> pd.Series:
+    """VCP 돌파 봉에 True — 조정 깊이가 단조 감소 + 거래량 고갈 후 돌파."""
+    high, low, close, volume, avg = _arrays(candles, params.volume_window)
+    n = len(close)
+    out = np.zeros(n, dtype=bool)
+    if n < params.window + params.prior_window + 2:
+        return pd.Series(out, index=candles.index)
+
+    for t in range(params.prior_window + params.window, n):
+        start = t - params.window
+        size = params.window // params.legs
+        depths, volumes = [], []
+        for leg in range(params.legs):
+            a = start + leg * size
+            b = a + size
+            seg_high, seg_low = high[a:b], low[a:b]
+            if len(seg_high) == 0 or seg_high.max() <= 0:
+                break
+            depths.append(1 - seg_low.min() / seg_high.max())
+            volumes.append(volume[a:b].mean())
+        if len(depths) < params.legs:
+            continue
+        if depths[0] > params.max_first_depth:
+            continue
+        # 조정이 갈수록 얕아져야 한다
+        if any(depths[i + 1] > depths[i] * params.shrink
+               for i in range(params.legs - 1)):
+            continue
+        # 거래량이 말라야 한다
+        if volumes[-1] > np.mean(volumes[:-1]) * params.dry_up:
+            continue
+
+        if not _prior_uptrend(close, start, params.prior_window, params.prior_gain):
+            continue
+        pivot = high[start:t].max()
+        if _breakout(close, volume, avg, t, pivot, params.volume_mult):
+            out[t] = True
+    return pd.Series(out, index=candles.index, name="volatility_contraction")
+
+
+# =====================================================================
+# 하이 타이트 플래그 (High Tight Flag) — 오닐이 가장 강하다고 한 형태
+# =====================================================================
+
+@dataclass(frozen=True)
+class HighTightFlagParams:
+    """짧은 기간에 급등한 뒤 아주 얕게만 쉬는 형태.
+
+    오닐은 '가장 드물지만 가장 강한' 패턴이라고 했다. 드물다는 건
+    표본이 적다는 뜻이므로, 검정력 부족을 결과로 오독하지 않도록 주의한다.
+    """
+
+    run_window: int = 40        # 급등을 볼 창
+    min_run: float = 0.90       # 그 기간에 90% 이상 상승
+    flag_window: int = 20       # 이후 조정 구간
+    max_pullback: float = 0.25  # 조정이 25% 안
+    volume_mult: float = 1.3
+    volume_window: int = 20
+
+
+def high_tight_flag(
+    candles: pd.DataFrame,
+    params: HighTightFlagParams = HighTightFlagParams(),
+) -> pd.Series:
+    high, low, close, volume, avg = _arrays(candles, params.volume_window)
+    n = len(close)
+    out = np.zeros(n, dtype=bool)
+    span = params.run_window + params.flag_window
+    if n < span + 2:
+        return pd.Series(out, index=candles.index)
+
+    for t in range(span, n):
+        run_start = t - span
+        run_end = run_start + params.run_window
+        if close[run_start] <= 0:
+            continue
+        peak = high[run_start:run_end].max()
+        if peak / close[run_start] - 1 < params.min_run:
+            continue
+        flag_low = low[run_end:t].min()
+        if peak <= 0 or 1 - flag_low / peak > params.max_pullback:
+            continue
+        if _breakout(close, volume, avg, t, peak, params.volume_mult):
+            out[t] = True
+    return pd.Series(out, index=candles.index, name="high_tight_flag")
+
+
+# =====================================================================
+# NR7 확장 돌파 (Toby Crabel) — 덜 알려졌지만 오래된 규칙
+# =====================================================================
+
+@dataclass(frozen=True)
+class Nr7Params:
+    """최근 7봉 중 일간 변동폭이 가장 좁은 봉 다음의 상방 돌파.
+
+    "변동성은 수축과 확장을 반복한다"는 것만 쓰는 규칙이다. 방향을
+    예측하지 않고 확장이 시작되는 쪽을 따라간다.
+    """
+
+    lookback: int = 7
+    volume_mult: float = 1.2
+    volume_window: int = 20
+    trend_window: int = 50      # 추세 위에서만 롱을 잡는다
+
+
+def nr7_breakout(candles: pd.DataFrame, params: Nr7Params = Nr7Params()) -> pd.Series:
+    high, low, close, volume, avg = _arrays(candles, params.volume_window)
+    n = len(close)
+    out = np.zeros(n, dtype=bool)
+    rng = high - low
+    sma = pd.Series(close).rolling(params.trend_window,
+                                   min_periods=params.trend_window).mean().to_numpy()
+    for t in range(max(params.lookback, params.trend_window) + 1, n):
+        window = rng[t - params.lookback: t]
+        if len(window) < params.lookback or not np.isfinite(sma[t]):
+            continue
+        # 직전 봉이 최근 7봉 중 가장 좁았는가
+        if rng[t - 1] > window.min():
+            continue
+        if close[t] <= sma[t]:
+            continue
+        if _breakout(close, volume, avg, t, high[t - 1], params.volume_mult):
+            out[t] = True
+    return pd.Series(out, index=candles.index, name="nr7_breakout")
+
+
+# =====================================================================
+# 파워 매수 (Pocket Pivot) — Morales & Kacher, 소문은 났지만 덜 검증된 것
+# =====================================================================
+
+@dataclass(frozen=True)
+class PocketPivotParams:
+    """상승 봉의 거래량이 '최근 하락 봉들의 최대 거래량'보다 큰 날.
+
+    돌파를 기다리지 않고 베이스 안에서 먼저 들어가려는 규칙이다.
+    기관 매집의 흔적을 거래량 비대칭으로 잡는다는 발상.
+    """
+
+    lookback: int = 10          # 최근 하락 봉을 볼 창
+    trend_window: int = 50
+    max_extension: float = 0.10  # 이동평균에서 10% 넘게 떨어져 있으면 늦었다
+
+
+def pocket_pivot(candles: pd.DataFrame,
+                 params: PocketPivotParams = PocketPivotParams()) -> pd.Series:
+    high, low, close, volume, _ = _arrays(candles, params.trend_window)
+    n = len(close)
+    out = np.zeros(n, dtype=bool)
+    sma = pd.Series(close).rolling(params.trend_window,
+                                   min_periods=params.trend_window).mean().to_numpy()
+    for t in range(params.trend_window + params.lookback, n):
+        if close[t] <= close[t - 1]:
+            continue
+        if not np.isfinite(sma[t]) or sma[t] <= 0:
+            continue
+        if close[t] < sma[t]:
+            continue
+        if close[t] / sma[t] - 1 > params.max_extension:
+            continue
+        window = slice(t - params.lookback, t)
+        down = volume[window][close[window] < close[t - params.lookback - 1: t - 1]]
+        if len(down) == 0:
+            continue
+        if volume[t] > down.max():
+            out[t] = True
+    return pd.Series(out, index=candles.index, name="pocket_pivot")
+
+
+# 널리 알려진 것 / 덜 알려진 것을 나눠 둔다. 유명세와 성과는 별개라는 것이
+# 이 프로젝트에서 확인하려는 것 중 하나다.
+FAMOUS_PATTERNS = ("cup_with_handle", "double_bottom", "flat_base", "bull_flag",
+                   "ascending_triangle", "inverse_head_and_shoulders",
+                   "falling_wedge")
+LESSER_KNOWN_PATTERNS = ("volatility_contraction", "high_tight_flag",
+                         "nr7_breakout", "pocket_pivot")
+
+PATTERNS.update({
+    "inverse_head_and_shoulders": inverse_head_and_shoulders,
+    "falling_wedge": falling_wedge,
+    "volatility_contraction": volatility_contraction,
+    "high_tight_flag": high_tight_flag,
+    "nr7_breakout": nr7_breakout,
+    "pocket_pivot": pocket_pivot,
+})
