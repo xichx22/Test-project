@@ -294,6 +294,87 @@ def cmd_pattern(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_portfolio(args: argparse.Namespace) -> int:
+    """자산군 결론을 실제 ETF·계좌로 내려보낸다 — 유동성·환노출·세금."""
+    import pandas as pd
+
+    from .evaluation.allocation import buy_and_hold, static_mix
+    from .evaluation.portfolio import (
+        ETF_CATALOG, account_comparison, horizon_gap, liquidity,
+    )
+
+    source = CsvDataSource(args.root)
+    interval = Interval(args.interval)
+
+    def close(code: str) -> pd.Series:
+        series = source.candles(code, interval)["close"]
+        if args.start:
+            series = series[series.index >= pd.Timestamp(args.start, tz=series.index.tz)]
+        return series
+
+    print("== 유동성 (최근 250거래일 일평균 거래대금 중앙값) ==")
+    candles = {}
+    for spec in ETF_CATALOG:
+        try:
+            candles[spec.code] = source.candles(spec.code, interval)
+        except FileNotFoundError:
+            continue
+    if candles:
+        table = liquidity(candles, days=args.liquidity_days)
+        table["중앙값(억)"] = (table.pop("median_turnover") / 1e8).round(1)
+        table["최소(억)"] = (table.pop("min_turnover") / 1e8).round(2)
+        print(table.drop(columns=["days"]).to_string())
+    else:
+        print(f"  {args.root} 에 ETF 캔들이 없습니다.")
+        return 1
+
+    picks = dict(pair.split("=") for pair in args.mix.split(","))
+    assets = {name: close(code) for name, code in picks.items()}
+    weights = {name: 1.0 for name in assets}
+
+    print("\n== 배분 성과 (동일가중, 분기 리밸런싱) ==")
+    mix = static_mix(assets, weights, rebalance=args.rebalance, name="동일가중")
+    frame = pd.DataFrame(assets).dropna()
+    rows = [mix]
+    if args.benchmark in picks:
+        bench = buy_and_hold(frame[args.benchmark])
+        bench.name = f"{args.benchmark} 100%"
+        rows.append(bench)
+    print(f"기간 {frame.index[0].date()} ~ {frame.index[-1].date()} ({mix.years:.1f}년)")
+    print(pd.DataFrame([{
+        "": r.name, "연수익": f"{r.cagr:.2%}",
+        "양수율12M": f"{r.rolling_positive(12):.3f}",
+        "최악12M": f"{r.worst_rolling(12):.2%}", "최악해": f"{r.worst_year:.2%}",
+        "무저점일수": r.longest_underwater_days, "궤양": f"{r.ulcer_index:.2f}",
+        "MDD": f"{r.max_drawdown:.2%}", "리밸": r.trades,
+    } for r in rows]).to_string(index=False))
+
+    print("\n== 계좌별 세금 (연금 vs 일반) ==")
+    by_code = {code: series for code, series in
+               zip(picks.values(), assets.values())}
+    domestic = tuple(c for c in by_code if _is_domestic_equity(c))
+    accounts = account_comparison(by_code, {c: 1.0 for c in by_code},
+                                  rebalance=args.rebalance, domestic_equity=domestic)
+    shown = accounts.copy()
+    shown["연수익"] = shown["연수익"].map("{:.2%}".format)
+    shown["최종배수"] = shown["최종배수"].map("{:.4f}".format)
+    shown["납부세액"] = shown["납부세액"].map(lambda v: f"{v * 100:.2f}%")
+    print(shown.to_string(index=False))
+    drag = accounts.attrs["drag"]
+    print(f"세금 드래그: 연 {drag:.3%}p  (매매차익 비과세: {', '.join(domestic) or '없음'})")
+    gap = horizon_gap(drag, accounts.loc[0, "연수익"], principal=args.principal)
+    for column in ("연금계좌", "일반계좌", "차이"):
+        gap[column] = gap[column].map(lambda v: f"{v:,.0f}원")
+    print(gap.to_string(index=False))
+    return 0
+
+
+def _is_domestic_equity(code: str) -> bool:
+    from .evaluation.portfolio import spec_for
+    spec = spec_for(code)
+    return bool(spec and not spec.taxable)
+
+
 def cmd_probe_toss(args: argparse.Namespace) -> int:
     """브라우저에서 복사한 요청으로 토스 캔들 엔드포인트를 확정한다."""
     from .datasource.toss import TossApiError, TossClient, parse_candles, save_session
@@ -482,6 +563,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--cost-bps", type=float, default=28.0)
     p.add_argument("--periods", type=int, default=4)
     p.set_defaults(func=cmd_pattern)
+
+    p = sub.add_parser("portfolio", help="ETF 선택·계좌 세금까지 내려본 실행 리포트")
+    p.add_argument("--root", default="data_asset")
+    p.add_argument("--interval", default="1d", choices=[i.value for i in Interval])
+    p.add_argument("--mix", default="한국주식=069500,미국주식=133690,국고채3년=114260,"
+                                    "국고채10년=148070,금=132030,달러=261240",
+                   help="이름=종목코드 를 쉼표로 나열")
+    p.add_argument("--benchmark", default="한국주식")
+    p.add_argument("--rebalance", default="QE", choices=["ME", "QE", "YE"])
+    p.add_argument("--start", default=None)
+    p.add_argument("--liquidity-days", type=int, default=250)
+    p.add_argument("--principal", type=float, default=10_000_000)
+    p.set_defaults(func=cmd_portfolio)
 
     p = sub.add_parser("probe-toss", help="브라우저 요청으로 토스 캔들 엔드포인트 확정")
     p.add_argument("--curl", default=None,

@@ -35,6 +35,17 @@ import pandas as pd
 ETF_ONE_WAY_BPS = 6.5
 
 
+def _rebalance_marks(index: pd.DatetimeIndex, rule: str) -> set[pd.Timestamp]:
+    """리밸런싱 날짜 = 각 주기의 **실제 마지막 거래일**.
+
+    `frame.resample("QE").last().index` 를 쓰면 안 된다. 그건 값을 모을 때 쓰는
+    구간 라벨(3/31, 6/30 …)이라 그 날이 휴장이면 어떤 봉과도 일치하지 않아
+    리밸런싱이 조용히 건너뛰어진다. KODEX 200 24년치에서 분기말 96번 중
+    52번만 거래일이었다 — 절반 가까이가 실행되지 않았다.
+    """
+    return set(index.to_series().resample(rule).last().dropna())
+
+
 @dataclass
 class BacktestResult:
     name: str
@@ -322,7 +333,7 @@ def static_mix(
     target = target / target.sum()
 
     if rebalance:
-        marks = set(frame.resample(rebalance).last().index)
+        marks = _rebalance_marks(frame.index, rebalance)
     else:
         marks = set()
 
@@ -373,7 +384,7 @@ def risk_parity(
     if target.empty:
         raise ValueError("변동성 창이 데이터보다 깁니다.")
 
-    marks = set(frame.loc[target.index].resample(rebalance).last().index)
+    marks = _rebalance_marks(target.index, rebalance)
     codes = list(frame.columns)
     holding = target.iloc[0].to_numpy(dtype=float)
     daily, trades = [], 0
