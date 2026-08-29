@@ -42,6 +42,7 @@ class BacktestResult:
     weight: pd.Series          # 일별 주식 비중
     daily: pd.Series           # 일별 수익률 (비용 차감)
     trades: int
+    risk_free: float = 0.02    # 샤프 계산용 무위험수익률 (연)
 
     @property
     def years(self) -> float:
@@ -57,7 +58,15 @@ class BacktestResult:
 
     @property
     def sharpe(self) -> float:
-        return float(self.cagr / self.volatility) if self.volatility > 0 else np.nan
+        """무위험수익률을 뺀 진짜 샤프.
+
+        빼지 않으면 사실상 무위험자산인 단기채가 샤프 1.1 로 나와
+        포트폴리오 비교가 통째로 왜곡된다 (실측: 국고채3년 CAGR 2.20% /
+        변동성 1.96% → 보정 전 1.121, 보정 후 0.102).
+        """
+        if self.volatility <= 0:
+            return np.nan
+        return float((self.cagr - self.risk_free) / self.volatility)
 
     @property
     def max_drawdown(self) -> float:
@@ -114,7 +123,7 @@ def _run(
     daily = weight * asset_return + (1 - weight) * cash_daily - cost
     equity = (1 + daily).cumprod()
     trades = int((turnover > 1e-9).sum())
-    return BacktestResult(name, equity, weight, daily, trades)
+    return BacktestResult(name, equity, weight, daily, trades, risk_free=cash_rate)
 
 
 # --- 규칙들 -------------------------------------------------------------
@@ -235,6 +244,7 @@ def static_mix(
     rebalance: str | None = "QE",
     one_way_bps: float = ETF_ONE_WAY_BPS,
     name: str | None = None,
+    risk_free: float = 0.02,
 ) -> BacktestResult:
     """정적 자산배분 + 정기 리밸런싱.
 
@@ -273,7 +283,8 @@ def static_mix(
     label = name or ("+".join(f"{c}{w:.0%}" for c, w in zip(codes, target))
                      + (f" {rebalance}리밸" if rebalance else " 무리밸"))
     weight_series = pd.Series(float(target[0]), index=returns.index)
-    return BacktestResult(label, equity, weight_series, series, len(turnover_log))
+    return BacktestResult(label, equity, weight_series, series, len(turnover_log),
+                          risk_free=risk_free)
 
 
 STRATEGIES: dict[str, Callable[..., BacktestResult]] = {
