@@ -484,6 +484,68 @@ def cmd_pattern_lab(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_screen(args: argparse.Namespace) -> int:
+    """오늘 기준 패턴 후보를 뽑는다 — 실제로 주문을 내려면 이게 필요하다."""
+    import pandas as pd
+
+    from .evaluation.playbook import Plan
+    from .signals.patterns import PATTERNS
+
+    if args.pattern not in PATTERNS:
+        print(f"알 수 없는 패턴: {args.pattern}. 가능: {', '.join(PATTERNS)}",
+              file=sys.stderr)
+        return 1
+    detector = PATTERNS[args.pattern]
+    plan = Plan(stop_loss=args.stop_loss, min_turnover=args.min_turnover)
+
+    source = CsvDataSource(args.root)
+    interval = Interval(args.interval)
+    names = _universe_names(args.root)
+
+    rows = []
+    for symbol in source.symbols(interval):
+        candles = source.candles(symbol.code, interval)
+        if len(candles) < 300:
+            continue
+        hits = detector(candles)
+        recent = hits.tail(args.within)
+        if not recent.any():
+            continue
+        stamp = recent[recent].index[-1]
+        row = candles.index.get_loc(stamp)
+        window = candles.iloc[max(0, row - 40):row + 1]
+        turnover = float((window["close"] * window["volume"]).median())
+        if turnover < plan.min_turnover:
+            continue
+        base = candles.iloc[max(0, row - 60):row]
+        close = float(candles["close"].iloc[row])
+        rows.append({
+            "종목": symbol.code,
+            "이름": names.get(symbol.code, "")[:12],
+            "신호일": stamp.date(),
+            "종가": close,
+            "손절가": round(close * (1 - (plan.stop_loss or 0)), 0),
+            "베이스깊이": 1 - float(base["low"].min()) / float(base["high"].max()),
+            "거래대금(억)": turnover / 1e8,
+        })
+
+    if not rows:
+        print(f"최근 {args.within}봉 안에 '{args.pattern}' 후보가 없습니다.")
+        return 0
+    frame = pd.DataFrame(rows).sort_values("거래대금(억)", ascending=False)
+    frame["베이스깊이"] = frame["베이스깊이"].map("{:.1%}".format)
+    frame["거래대금(억)"] = frame["거래대금(억)"].map("{:,.0f}".format)
+    frame["종가"] = frame["종가"].map("{:,.0f}".format)
+    frame["손절가"] = frame["손절가"].map("{:,.0f}".format)
+    pd.set_option("display.width", 200)
+    print(f"'{args.pattern}' 후보 {len(frame)}종목 "
+          f"(최근 {args.within}봉, 거래대금 {plan.min_turnover/1e8:.0f}억 이상)")
+    print(frame.head(args.top).to_string(index=False))
+    print(f"\n체결 규약: 신호 다음 거래일 **시가** 매수. "
+          f"손절 -{(plan.stop_loss or 0):.0%}, 최대 보유 {args.holding}일.")
+    return 0
+
+
 def cmd_probe_toss(args: argparse.Namespace) -> int:
     """브라우저에서 복사한 요청으로 토스 캔들 엔드포인트를 확정한다."""
     from .datasource.toss import TossApiError, TossClient, parse_candles, save_session
@@ -706,6 +768,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--periods", type=int, default=8)
     p.add_argument("--top", type=int, default=5)
     p.set_defaults(func=cmd_pattern_lab)
+
+    p = sub.add_parser("screen", help="오늘 기준 패턴 후보 종목 뽑기")
+    p.add_argument("--root", default="data_wide")
+    p.add_argument("--interval", default="1d", choices=[i.value for i in Interval])
+    p.add_argument("--pattern", default="flat_base")
+    p.add_argument("--within", type=int, default=3, help="최근 N봉 안의 신호만")
+    p.add_argument("--stop-loss", type=float, default=0.08)
+    p.add_argument("--holding", type=int, default=120)
+    p.add_argument("--min-turnover", type=float, default=3e8)
+    p.add_argument("--top", type=int, default=20)
+    p.set_defaults(func=cmd_screen)
 
     p = sub.add_parser("probe-toss", help="브라우저 요청으로 토스 캔들 엔드포인트 확정")
     p.add_argument("--curl", default=None,
