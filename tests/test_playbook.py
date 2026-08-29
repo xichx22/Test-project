@@ -151,3 +151,40 @@ def test_summarize_reports_win_rate_and_payoff():
 
 def test_summarize_handles_an_empty_log():
     assert summarize(pd.DataFrame()) == {}
+
+
+def test_gate_blocks_new_entries():
+    """게이트가 닫힌 날에는 새로 사지 않는다."""
+    frame = _bars(np.full(60, 100.0))
+    gate = pd.Series(False, index=frame.index)
+    _, log = run_plan({"A": _signal(frame, [10])}, {"A": frame},
+                      Plan(max_positions=1, holding_days=10, stop_loss=None),
+                      gate=gate)
+    assert log.empty
+
+
+def test_gate_off_can_liquidate_open_positions():
+    """진입만 막으면 이미 산 것이 하락장을 그대로 맞는다.
+
+    exit_on_gate_off 를 켜면 게이트가 닫히는 날 보유분도 판다.
+    """
+    frame = _bars(np.full(60, 100.0))
+    gate = pd.Series(True, index=frame.index)
+    gate.iloc[20:] = False
+    plan = Plan(max_positions=1, holding_days=60, stop_loss=None,
+                exit_on_gate_off=True)
+    _, log = run_plan({"A": _signal(frame, [10])}, {"A": frame},
+                      plan, gate=gate)
+    assert len(log) == 1
+    assert log.iloc[0]["reason"] == "gate"
+    assert log.iloc[0]["exit"] == frame.index[20]
+
+
+def test_gate_off_without_the_flag_keeps_holding():
+    frame = _bars(np.full(60, 100.0))
+    gate = pd.Series(True, index=frame.index)
+    gate.iloc[20:] = False
+    _, log = run_plan({"A": _signal(frame, [10])}, {"A": frame},
+                      Plan(max_positions=1, holding_days=30, stop_loss=None),
+                      gate=gate)
+    assert log.iloc[0]["reason"] == "time"

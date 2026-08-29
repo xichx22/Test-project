@@ -47,6 +47,7 @@ class Plan:
     one_way_bps: float = STOCK_ONE_WAY_BPS
     cash_rate: float = 0.02
     min_turnover: float = 3e8           # 일 거래대금 하한 (3억). 못 사는 종목을 뺀다
+    exit_on_gate_off: bool = False      # 시장 게이트가 닫히면 보유분도 전부 청산
 
 
 @dataclass
@@ -85,8 +86,15 @@ def run_plan(
     events: Mapping[str, pd.Series],
     candles: Mapping[str, pd.DataFrame],
     plan: Plan = Plan(),
+    gate: pd.Series | None = None,
 ) -> tuple[BacktestResult, pd.DataFrame]:
-    """규칙대로 한 건씩 체결해 자산곡선과 체결 내역을 낸다."""
+    """규칙대로 한 건씩 체결해 자산곡선과 체결 내역을 낸다.
+
+    `gate` 는 "오늘 새로 사도 되는가"를 날짜별로 담은 boolean Series 다
+    (예: 지수가 200일선 위). `plan.exit_on_gate_off` 를 켜면 게이트가
+    닫히는 날 보유분도 전부 판다 — 진입만 막으면 이미 산 것이 하락장을
+    그대로 맞기 때문이다.
+    """
     index = pd.DatetimeIndex(sorted(set().union(*[d.index for d in candles.values()])))
     pos_of = {ts: i for i, ts in enumerate(index)}
     cost = plan.one_way_bps / 10_000.0
@@ -150,8 +158,22 @@ def run_plan(
                                     exit_price, slot["bars"], reason))
                 del open_slots[code]
 
+        # --- 시장 게이트가 닫히면 전량 청산 ---
+        gate_open = True if gate is None else bool(gate.get(stamp, False))
+        if plan.exit_on_gate_off and not gate_open and open_slots:
+            for code in list(open_slots):
+                slot = open_slots[code]
+                frame = candles[code]
+                if stamp not in frame.index:
+                    continue
+                price = float(frame.loc[stamp, "close"])
+                cash += slot["shares"] * price * (1 - cost)
+                trades.append(Trade(code, slot["entry_date"], stamp, slot["entry"],
+                                    price, slot["bars"], "gate"))
+                del open_slots[code]
+
         # --- 진입 ---
-        candidates = sorted(pending.get(stamp, []), reverse=True)
+        candidates = [] if not gate_open else sorted(pending.get(stamp, []), reverse=True)
         for _, code in candidates:
             if len(open_slots) >= plan.max_positions or code in open_slots:
                 continue
