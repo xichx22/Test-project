@@ -935,3 +935,84 @@ PATTERNS.update({
     "nr7_breakout": nr7_breakout,
     "pocket_pivot": pocket_pivot,
 })
+
+
+# =====================================================================
+# 삼중바닥 (Triple Bottom) — 같은 높이의 저점 셋
+# =====================================================================
+
+@dataclass(frozen=True)
+class TripleBottomParams:
+    """세 저점이 비슷한 높이여야 하고, 사이의 반등이 충분해야 한다.
+
+    쌍바닥과의 차이는 저점이 하나 더 있다는 것뿐이지만, 조건이 하나 늘면
+    표본이 급격히 줄어든다. 문헌에서 '더 강한 신호'라고 말하는 이유가
+    희소성 때문인지 형태 때문인지는 이 데이터로 갈리지 않는다.
+    """
+
+    window: int = 120
+    level_gap: float = 0.06      # 세 저점의 높이 차이가 6% 안
+    min_separation: int = 10     # 저점끼리 최소 간격
+    min_bounce: float = 0.05     # 저점 사이 반등이 5% 이상
+    volume_mult: float = 1.3
+    volume_window: int = 20
+    prior_window: int = 60
+    prior_drop: float = 0.10     # 반전 패턴이므로 앞선 하락을 본다
+
+
+def triple_bottom(
+    candles: pd.DataFrame,
+    params: TripleBottomParams = TripleBottomParams(),
+) -> pd.Series:
+    """삼중바닥 완성 봉(넥라인 돌파)에 True."""
+    high, low, close, volume, avg = _arrays(candles, params.volume_window)
+    n = len(close)
+    out = np.zeros(n, dtype=bool)
+    if n < params.window + params.prior_window + 2:
+        return pd.Series(out, index=candles.index)
+
+    for t in range(params.prior_window + params.window, n):
+        if not np.isfinite(avg[t]) or volume[t] < params.volume_mult * avg[t]:
+            continue
+        if close[t] <= close[t - 1]:
+            continue
+
+        start = t - params.window
+        seg_low = low[start:t]
+        third = len(seg_low) // 3
+        if third < params.min_separation:
+            continue
+        idx = [start + int(np.argmin(seg_low[:third])),
+               start + third + int(np.argmin(seg_low[third:2 * third])),
+               start + 2 * third + int(np.argmin(seg_low[2 * third:]))]
+        if idx[1] - idx[0] < params.min_separation:
+            continue
+        if idx[2] - idx[1] < params.min_separation:
+            continue
+
+        lows = [low[i] for i in idx]
+        if min(lows) <= 0:
+            continue
+        # 세 저점이 같은 높이여야 한다 — 이게 삼중바닥의 정의다
+        if (max(lows) - min(lows)) / min(lows) > params.level_gap:
+            continue
+
+        # 저점 사이에 실제 반등이 있어야 한다 (붙어 있는 저점은 하나로 본다)
+        peaks = [high[idx[0]:idx[1]].max(), high[idx[1]:idx[2]].max()]
+        if any(p / min(lows) - 1 < params.min_bounce for p in peaks):
+            continue
+
+        prior = start - params.prior_window
+        if prior < 0 or close[prior] <= 0:
+            continue
+        if close[start] / close[prior] - 1 > -params.prior_drop:
+            continue
+
+        neckline = max(peaks)
+        if _breakout(close, volume, avg, t, neckline, params.volume_mult):
+            out[t] = True
+    return pd.Series(out, index=candles.index, name="triple_bottom")
+
+
+PATTERNS["triple_bottom"] = triple_bottom
+FAMOUS_PATTERNS = FAMOUS_PATTERNS + ("triple_bottom",)
