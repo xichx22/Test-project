@@ -627,6 +627,35 @@ def cmd_desk(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_screen_fin(args: argparse.Namespace) -> int:
+    """재무 수치로 후보를 거른다 — 순위는 매기지 않는다."""
+    import pandas as pd
+
+    from .evaluation.fundamentals import Screen, distribution, screen
+
+    frame = pd.read_csv(args.input, dtype={"code": str})
+    pd.set_option("display.width", 200)
+    if args.distribution:
+        table = distribution(frame)
+        table["결측률"] = table["결측률"].map("{:.0%}".format)
+        for column in ("하위25%", "중앙값", "상위25%"):
+            table[column] = table[column].map("{:,.2f}".format)
+        print(table.to_string(index=False))
+        return 0
+
+    spec = Screen(
+        max_per=args.max_per, max_pbr=args.max_pbr, min_roe=args.min_roe,
+        min_div=args.min_div, max_debt=args.max_debt,
+        min_cap=args.min_cap * 1e8 if args.min_cap else None,
+    )
+    result = screen(frame, spec)
+    print(result.report(top=args.top))
+    print("\n이 목록은 검증된 매수 신호가 아니다. 무료로 구할 수 있는 한국 재무")
+    print("이력이 3년치뿐이라 백테스트를 못 했다 (관측 2개). 조건을 만족하지")
+    print("못하는 종목을 후보에서 빼는 용도로만 쓴다.")
+    return 0
+
+
 def cmd_probe_toss(args: argparse.Namespace) -> int:
     """브라우저에서 복사한 요청으로 토스 캔들 엔드포인트를 확정한다."""
     from .datasource.toss import TossApiError, TossClient, parse_candles, save_session
@@ -905,6 +934,18 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--until", default="9999-12-31")
 
     p.set_defaults(func=cmd_desk)
+
+    p = sub.add_parser("screen-fin", help="재무 수치로 후보 거르기")
+    p.add_argument("--input", required=True, help="code,name,cap,per,pbr,roe,div,debt 가 든 CSV")
+    p.add_argument("--distribution", action="store_true", help="문턱 대신 분포를 본다")
+    p.add_argument("--max-per", type=float, default=15.0)
+    p.add_argument("--max-pbr", type=float, default=1.5)
+    p.add_argument("--min-roe", type=float, default=5.0)
+    p.add_argument("--min-div", type=float, default=None)
+    p.add_argument("--max-debt", type=float, default=150.0)
+    p.add_argument("--min-cap", type=float, default=5000, help="억원 단위")
+    p.add_argument("--top", type=int, default=20)
+    p.set_defaults(func=cmd_screen_fin)
 
     p = sub.add_parser("probe-toss", help="브라우저 요청으로 토스 캔들 엔드포인트 확정")
     p.add_argument("--curl", default=None,
