@@ -43,6 +43,13 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 # 스윙 규칙 5,176개 순위표 + 그 순위가 유지되는지 검정 (약 4분)
 .venv/bin/python -m tsignal swing --root data_big
 
+# 매매 데스크 — 수량 계산 · 진입 게이트 · 기록 · 리뷰
+.venv/bin/python -m tsignal desk size --price 107500
+.venv/bin/python -m tsignal desk gate --code 105560 --plan --stop 98900 \
+    --size-ok --market-gate --planned-risk 80000 --actual-risk 77400
+.venv/bin/python -m tsignal desk status
+.venv/bin/python -m tsignal desk review --since 2026-09-01
+
 # 자산배분을 실제 ETF·계좌로 내려본 실행 리포트 (유동성·환노출·세금)
 .venv/bin/python -m tsignal portfolio --root data_asset
 
@@ -452,7 +459,57 @@ IS/OOS를 한 번만 자르면 결론이 "어느 날짜에 잘랐는가"에 걸�
 2016년에는 전략이 −38.6%, 그냥 보유는 +2.7% 였다. 이 해를 규칙대로
 버티는 것은 백테스트에서는 한 줄이지만 실제로는 다른 문제다.
 
-### 최종 — 이 프로젝트가 잰 것들을 크기순으로 세우면
+### 매매 데스크 — 규율을 코드로
+
+이 프로젝트가 21년 1,064종목으로 확인한 것은 **가격 데이터로 매매 타이밍의
+우위를 찾을 수 없다**는 것이었다. 그렇다면 통제할 수 있는 변수는 규칙을
+지키는가 하나뿐이다. `src/tsignal/desk/` 는 그것만 다룬다.
+
+구조와 용어는 [tradermonty/claude-trading-skills](https://github.com/tradermonty/claude-trading-skills)
+(MIT, © 2026 TraderMonty) 의 `position-sizer` · `drawdown-circuit-breaker` ·
+`pre-trade-discipline-gate` · `trader-memory-core` 를 참고했다. 전문은
+[`docs/ported-from.md`](docs/ported-from.md).
+
+| 모듈 | 하는 일 |
+|---|---|
+| `sizing` | 자리 수와 손절 폭으로 각각 재고 **작은 쪽**을 쓴다. 손절가를 호가 단위에 맞춘다 |
+| `guard` | 오늘 새 매매를 해도 되는가 — 일·주·월·12개월 실현손실과 규칙 위반 |
+| `checklist` | 이 주문을 내도 되는가 — 답이 없으면 통과가 아니라 차단 |
+| `ledger` | 한 줄 한 건. 중복 진입을 막고, 깨진 줄은 줄 번호와 함께 알린다 |
+| `review` | 백테스트 참조 분포와 나란히 낸다 |
+
+### 문턱을 그대로 가져오면 전략이 죽는다
+
+이식에서 가장 중요했던 부분이다. 원본 차단기의 기본값을 이 전략에 적용하면
+21년 552건 실측에서 이렇게 된다.
+
+| 원본 기본값 | 21년간 발동 횟수 |
+|---|---:|
+| 연속 2패 → 쿨다운 | **45번** (사실상 영구 정지) |
+| 일 손실 2% → 정지 | 113일 (거래일의 2.1%) |
+| 주간 5% → 정지 | 13주 |
+| 월간 8% → 정지 | 2개월 |
+
+이 규칙은 **승률 34%, 최장 연속 손실 32회**다. 연속 손실은 고장이 아니라
+설계다. 그래서 연속 패배 문턱은 쓰지 않고, 나머지는 실측 분포의 꼬리에서
+다시 유도했다 (일 −5% · 주 −8% · 월 −12% · 12개월 −25%).
+
+원칙: **정상 범위의 나쁜 구간에서는 울리지 않고, 백테스트가 설명하지 못하는
+구간에서만 울린다.** 자주 울리는 차단기는 전략을 죽인다.
+
+### 안 가져온 것
+
+73종 중 대부분이다. 미국 시장 전용 스크리너 약 40종(CANSLIM·VCP·Stockbee 등),
+유료 API 전제(FMP·Alpaca·FINVIZ), 옵션·선물·MT5·일본 세무. 그리고
+`backtest-expert` 같은 방법론 문서는 이 저장소의 `docs/methodology.md` 가
+같은 주제를 실측 사례와 함께 더 깊게 다룬다.
+
+원본 인덱스는 스킬마다 검증 상태를 공개하는데 **73종 전부
+`empirical_validation: not_verified`** 다. 저장소가 스스로 "not a signal
+service" 라고 밝히고 있으므로 비판이 아니라 사실 확인이다 —
+**이식한 것은 성과가 아니라 규율이다.**
+
+## 최종 — 이 프로젝트가 잰 것들을 크기순으로 세우면
 
 매매 규칙을 찾는 데 세션 대부분을 썼다. 마지막에 전부 한 줄에 세워 봤다.
 

@@ -546,6 +546,87 @@ def cmd_screen(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_desk(args: argparse.Namespace) -> int:
+    """매매 데스크 — 수량 계산 · 진입 게이트 · 기록 · 리뷰."""
+    from datetime import date
+
+    from .desk import (
+        Answers, Fill, Ledger, Thresholds,
+        evaluate_checklist, evaluate_guard, review, size_order,
+    )
+
+    ledger = Ledger(args.ledger)
+
+    if args.desk_cmd == "size":
+        out = size_order(args.account, args.price,
+                         max_positions=args.slots, stop_loss=args.stop_loss)
+        print(f"  주문 수량   {out.shares:,}주")
+        print(f"  진입가      {out.price:,.0f}원")
+        print(f"  손절가      {out.stop_price:,.0f}원  (호가 단위 반올림)")
+        print(f"  주문 금액   {out.notional:,.0f}원")
+        print(f"  손절 시 손실 {out.risk_amount:,.0f}원 (계좌의 {out.risk_pct_of_account:.2%})")
+        print(f"  왕복 비용   {out.cost_estimate:,.0f}원")
+        print(f"  수량을 정한 것: {out.binding} 기준")
+        return 0
+
+    if args.desk_cmd == "status":
+        fills = ledger.load()
+        guard = evaluate_guard(fills, args.account, thresholds=Thresholds())
+        print(f"차단기: {guard.summary()}")
+        for k, v in guard.detail.items():
+            print(f"  {k:8s} {v:+.2%}" if isinstance(v, float) else f"  {k:8s} {v}")
+        opened = [f for f in fills if f.status == "open"]
+        print(f"\n보유 {len(opened)} / {args.slots}자리")
+        for f in opened:
+            print(f"  {f.code} {f.name[:10]:10s} {f.shares:>5,}주 "
+                  f"진입 {f.entry_price:>9,.0f}  손절 {f.stop_price:>9,.0f}  ({f.entry_date})")
+        return 0
+
+    if args.desk_cmd == "gate":
+        fills = ledger.load()
+        guard = evaluate_guard(fills, args.account, thresholds=Thresholds())
+        held = any(f.code == args.code and f.status == "open" for f in fills)
+        free = args.slots - len([f for f in fills if f.status == "open"])
+        answers = Answers(
+            written_plan=args.plan, stop_defined=args.stop is not None,
+            size_within_plan=args.size_ok, gate_open=args.market_gate,
+            slots_free=free, already_held=held,
+            planned_risk=args.planned_risk, actual_risk=args.actual_risk,
+        )
+        result = evaluate_checklist(answers, guard)
+        print(result.summary())
+        return 0 if result.ok else 2
+
+    if args.desk_cmd == "log":
+        fill = Fill(code=args.code, name=args.name or "",
+                    entry_date=args.date or date.today().isoformat(),
+                    entry_price=args.price, shares=args.shares,
+                    stop_price=args.stop or 0.0, reason=args.reason or "",
+                    plan_note=args.note or "")
+        ledger.add(fill)
+        print(f"기록: {fill.code} {fill.shares:,}주 @ {fill.entry_price:,.0f} "
+              f"(손절 {fill.stop_price:,.0f}) → {ledger.path}")
+        return 0
+
+    if args.desk_cmd == "close":
+        fill = ledger.close(args.code, exit_date=args.date or date.today().isoformat(),
+                            exit_price=args.price, exit_reason=args.exit_reason,
+                            lesson=args.note or "")
+        r = fill.net_return()
+        print(f"청산: {fill.code} @ {fill.exit_price:,.0f} ({fill.exit_reason})  "
+              f"비용 차감 후 {r:+.2%}")
+        return 0
+
+    if args.desk_cmd == "review":
+        fills = ledger.between(args.since, args.until) if args.since else ledger.load()
+        label = f"{args.since} ~ {args.until}" if args.since else "전체"
+        print(review(fills, period=label).report())
+        return 0
+
+    print("desk 하위 명령을 지정하세요.", file=sys.stderr)
+    return 1
+
+
 def cmd_probe_toss(args: argparse.Namespace) -> int:
     """브라우저에서 복사한 요청으로 토스 캔들 엔드포인트를 확정한다."""
     from .datasource.toss import TossApiError, TossClient, parse_candles, save_session
@@ -779,6 +860,51 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--min-turnover", type=float, default=3e8)
     p.add_argument("--top", type=int, default=20)
     p.set_defaults(func=cmd_screen)
+
+    p = sub.add_parser("desk", help="매매 데스크 (수량·게이트·기록·리뷰)")
+    p.add_argument("--ledger", default="state/ledger.jsonl")
+    p.add_argument("--account", type=float, default=10_000_000)
+    p.add_argument("--slots", type=int, default=10)
+    p.add_argument("--stop-loss", type=float, default=0.08)
+    d = p.add_subparsers(dest="desk_cmd")
+
+    q = d.add_parser("size", help="주문 수량 계산")
+    q.add_argument("--price", type=float, required=True)
+
+    d.add_parser("status", help="차단기 상태와 보유 현황")
+
+    q = d.add_parser("gate", help="진입 전 규율 게이트")
+    q.add_argument("--code", required=True)
+    q.add_argument("--plan", action="store_true", help="계획에 적힌 진입인가")
+    q.add_argument("--stop", type=float, default=None)
+    q.add_argument("--size-ok", action="store_true", help="수량이 계획 범위인가")
+    q.add_argument("--market-gate", action="store_true", help="이번 달 게이트가 열렸는가")
+    q.add_argument("--planned-risk", type=float, default=None)
+    q.add_argument("--actual-risk", type=float, default=None)
+
+    q = d.add_parser("log", help="진입 기록")
+    q.add_argument("--code", required=True)
+    q.add_argument("--name", default=None)
+    q.add_argument("--price", type=float, required=True)
+    q.add_argument("--shares", type=int, required=True)
+    q.add_argument("--stop", type=float, default=None)
+    q.add_argument("--date", default=None)
+    q.add_argument("--reason", default="flat_base")
+    q.add_argument("--note", default=None)
+
+    q = d.add_parser("close", help="청산 기록")
+    q.add_argument("--code", required=True)
+    q.add_argument("--price", type=float, required=True)
+    q.add_argument("--exit-reason", default="stop",
+                   choices=["stop", "time", "gate", "manual"])
+    q.add_argument("--date", default=None)
+    q.add_argument("--note", default=None)
+
+    q = d.add_parser("review", help="기간 리뷰")
+    q.add_argument("--since", default=None)
+    q.add_argument("--until", default="9999-12-31")
+
+    p.set_defaults(func=cmd_desk)
 
     p = sub.add_parser("probe-toss", help="브라우저 요청으로 토스 캔들 엔드포인트 확정")
     p.add_argument("--curl", default=None,
