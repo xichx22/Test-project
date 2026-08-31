@@ -5,7 +5,8 @@ import pandas as pd
 import pytest
 
 from tsignal.evaluation.exitlab import (
-    Exit, baseline_events, by_year, compare, resolve, summarise,
+    Exit, baseline_events, by_year, compare, insurance_cost, resolve,
+    split_by_regime, summarise,
 )
 
 
@@ -156,3 +157,45 @@ def test_by_year_splits_the_record():
     hit.iloc[::20] = True
     out = by_year({"A": hit}, {"A": frame}, None, Exit("만기", horizon=10))
     assert len(out) >= 2 and set(out.columns) >= {"연도", "표본", "평균", "승률"}
+
+
+def test_split_by_regime_uses_the_entry_date():
+    index = pd.date_range("2020-01-01", periods=200, freq="B", tz="Asia/Seoul")
+    frame = pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0,
+                          "close": 100.0, "volume": 1.0}, index=index)
+    hit = pd.Series(False, index=index)
+    hit.iloc[[10, 100]] = True
+    trades = resolve({"A": hit}, {"A": frame}, None, rule=Exit("t", horizon=10))
+    regime = pd.Series(False, index=index)
+    regime.iloc[:50] = True
+    out = split_by_regime(trades, regime)
+    assert list(out["표본"]) == [1, 1]
+
+
+def test_insurance_breaks_even_where_premium_equals_payout():
+    """보험료와 보험금이 같으면 손익분기는 50% 여야 한다."""
+    index = pd.DatetimeIndex(
+        [pd.Timestamp("2020-01-0%d" % d, tz="Asia/Seoul") for d in (1, 2, 3, 6)])
+    up = pd.Series([True, True, False, False], index=index)
+    hold = pd.DataFrame({"신호일": index, "수익": [0.10, 0.10, -0.10, -0.10]})
+    rule = pd.DataFrame({"신호일": index, "수익": [0.05, 0.05, -0.05, -0.05]})
+    out = insurance_cost({"없음": hold, "규칙": rule}, up, hold_label="없음")
+    row = out.iloc[0]
+    assert row["보험료"] == pytest.approx(-0.05)
+    assert row["보험금"] == pytest.approx(+0.05)
+    assert row["손익분기 하락비중"] == pytest.approx(0.5)
+    assert bool(row["보험 성립"])
+    assert out.attrs["실제 하락비중"] == pytest.approx(0.5)
+
+
+def test_a_rule_that_loses_in_both_regimes_is_never_insurance():
+    """하락 구간에서도 더 나쁘면 보험금이 음수 — 손익분기가 1을 넘는다."""
+    index = pd.DatetimeIndex(
+        [pd.Timestamp("2020-01-0%d" % d, tz="Asia/Seoul") for d in (1, 2, 3, 6)])
+    up = pd.Series([True, True, False, False], index=index)
+    hold = pd.DataFrame({"신호일": index, "수익": [0.10, 0.10, -0.10, -0.10]})
+    rule = pd.DataFrame({"신호일": index, "수익": [0.05, 0.05, -0.20, -0.20]})
+    out = insurance_cost({"없음": hold, "규칙": rule}, up, hold_label="없음")
+    assert out.iloc[0]["보험금"] < 0
+    assert not out.iloc[0]["보험 성립"]
+    assert np.isnan(out.iloc[0]["손익분기 하락비중"])

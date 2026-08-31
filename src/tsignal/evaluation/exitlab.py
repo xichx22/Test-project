@@ -267,3 +267,95 @@ def by_year(
                 row["차이"] = row["평균"] - row["기준선"]
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+# =====================================================================
+# 청산은 보험이다 — 국면으로 갈라 보험료와 보험금을 잰다
+# =====================================================================
+
+def split_by_regime(
+    trades: pd.DataFrame,
+    regime: pd.Series,
+    *,
+    labels: tuple[str, str] = ("상승", "하락"),
+) -> pd.DataFrame:
+    """매매 목록을 진입 시점의 국면으로 가른다.
+
+    `regime` 은 날짜 → 불리언. True 인 날 진입한 것이 첫 번째 묶음이다.
+    """
+    if trades.empty:
+        return pd.DataFrame()
+    stamps = pd.DatetimeIndex(trades["신호일"])
+    flag = regime.reindex(stamps).to_numpy()
+    rows = []
+    for label, mask in ((labels[0], flag == True), (labels[1], flag == False)):
+        sub = trades[mask]
+        rows.append({
+            "국면": label, "표본": len(sub),
+            "평균": float(sub["수익"].mean()) if len(sub) else np.nan,
+            "승률": float((sub["수익"] > 0).mean()) if len(sub) else np.nan,
+        })
+    return pd.DataFrame(rows)
+
+
+def insurance_cost(
+    trades: Mapping[str, pd.DataFrame],
+    outcome: pd.Series,
+    *,
+    hold_label: str,
+) -> pd.DataFrame:
+    """청산 규칙을 보험으로 보고 보험료·보험금·손익분기를 낸다.
+
+    `outcome` 은 날짜 → 진입 후 시장이 올랐는지(불리언). **사후 정보**이므로
+    이것으로 매매 규칙을 만들 수는 없다. 여기서는 "청산 규칙이 값을 하는
+    구간은 어디인가" 를 진단하는 데만 쓴다.
+
+    손익분기 = 시장이 내리는 구간의 비중이 이 값을 넘으면 그 청산 규칙을
+    켜 두는 쪽이 `hold_label`(보통 '청산 없음') 을 이긴다.
+
+    실측(2020~2025, 1,063종목): 어떤 규칙도 손익분기가 69% 아래로 내려오지
+    않았고 실제 하락 구간은 39~46% 였다. 그리고 **손절은 하락 구간에서도
+    청산 없음보다 나빴다** — 잘린 뒤 반등을 놓치기 때문이다. 보험 역할을
+    한 것은 손절이 아니라 익절이었다.
+    """
+    split = {}
+    for name, frame in trades.items():
+        if frame.empty:
+            continue
+        stamps = pd.DatetimeIndex(frame["신호일"])
+        up = outcome.reindex(stamps).to_numpy()
+        ret = frame["수익"].to_numpy(float)
+        split[name] = (
+            float(np.nanmean(ret[up == True])) if (up == True).any() else np.nan,
+            float(np.nanmean(ret[up == False])) if (up == False).any() else np.nan,
+            float(np.nanmean(up == False)),
+        )
+    if hold_label not in split:
+        raise KeyError(f"{hold_label!r} 가 trades 에 없다")
+    hold_up, hold_down, share = split[hold_label]
+
+    rows = []
+    for name, (up, down, _) in split.items():
+        if name == hold_label:
+            continue
+        premium = up - hold_up               # 보험료 (보통 음수)
+        payout = down - hold_down            # 보험금 (양수여야 보험이다)
+        # 보험금이 0 이하면 하락 구간에서도 청산 없음보다 나쁘다는 뜻이다.
+        # 그런 규칙에는 손익분기가 존재하지 않는다 (분모 부호에 따라 음수나
+        # 1 초과가 나오는데, 둘 다 '어떤 비중에서도 이기지 못함' 을 뜻한다).
+        breakeven = np.nan
+        if payout > 0:
+            denom = -premium + payout
+            breakeven = (-premium / denom) if denom else np.nan
+        rows.append({
+            "청산 규칙": name,
+            "보험 성립": bool(payout > 0),
+            "보험료": premium, "보험금": payout,
+            "손익분기 하락비중": breakeven,
+            "시장상승구간": up, "시장하락구간": down,
+        })
+    out = pd.DataFrame(rows).sort_values("손익분기 하락비중", na_position="last")
+    out.attrs["실제 하락비중"] = share
+    out.attrs["청산없음 상승구간"] = hold_up
+    out.attrs["청산없음 하락구간"] = hold_down
+    return out
