@@ -151,7 +151,10 @@ def resolve(
             price, bars, reason = got
             entry = open_[i + 1]
             rows.append({
-                "code": code, "신호일": stamp, "진입": entry, "청산": price,
+                "code": code, "신호일": stamp,
+                "진입일": frame.index[i + 1],
+                "청산일": frame.index[min(i + bars, len(frame) - 1)],
+                "진입": entry, "청산": price,
                 "보유봉": bars, "사유": reason,
                 "수익": price / entry - 1 - cost_bps / 10_000,
             })
@@ -359,3 +362,101 @@ def insurance_cost(
     out.attrs["청산없음 상승구간"] = hold_up
     out.attrs["청산없음 하락구간"] = hold_down
     return out
+
+
+# =====================================================================
+# 자리가 모자라면 무엇을 버리는가 — 계좌 수준 시뮬레이션
+# =====================================================================
+
+def portfolio(
+    trades: pd.DataFrame,
+    candles: Mapping[str, pd.DataFrame],
+    *,
+    calendar: pd.DatetimeIndex,
+    max_positions: int = 10,
+    capital: float = 10_000_000.0,
+    rank: pd.Series | None = None,
+    cash_rate: float = 0.025,
+) -> tuple[pd.Series, dict]:
+    """매매 목록을 자리 수 제한이 있는 계좌로 굴린다.
+
+    왜 필요한가: 매매 한 건당 평균이 좋아도 계좌 수익률은 다르다. 신호가
+    하루에 300개 떠도 자리가 10개면 10개만 산다. 무엇을 버릴지, 그리고
+    자본이 얼마나 오래 묶이는지가 결과를 바꾼다.
+
+    `rank` 는 (code, 진입일) → 우선순위. 크면 먼저 산다. 없으면 들어온 순서.
+    잔고는 매일 종가로 평가한다 — 진입가로만 평가하면 최대낙폭이 실제보다
+    작게 나온다.
+    """
+    if trades.empty:
+        return pd.Series(dtype=float), {"매매 수": 0}
+
+    close = pd.DataFrame({c: f["close"] for c, f in candles.items()}).ffill()
+    frame = trades.copy()
+    if rank is not None:
+        key = pd.MultiIndex.from_arrays([frame["code"], pd.DatetimeIndex(frame["진입일"])])
+        frame["우선순위"] = rank.reindex(key).to_numpy()
+    else:
+        frame["우선순위"] = 0.0
+    by_entry: dict[pd.Timestamp, list] = {}
+    for row in frame.itertuples():
+        by_entry.setdefault(row.진입일, []).append(row)
+
+    cash = capital
+    open_pos: list[dict] = []
+    curve, filled, skipped = [], [], 0
+    daily = (1 + cash_rate) ** (1 / 252) - 1
+
+    for stamp in calendar:
+        cash *= 1 + daily
+        still = []
+        for pos in open_pos:
+            if pos["exit_date"] <= stamp:
+                cash += pos["shares"] * pos["exit_price"]
+                filled.append(pos["ret"])
+            else:
+                still.append(pos)
+        open_pos = still
+
+        todays = sorted(by_entry.get(stamp, []), key=lambda r: -(r.우선순위 if np.isfinite(r.우선순위) else -np.inf))
+        for row in todays:
+            if len(open_pos) >= max_positions:
+                skipped += 1
+                continue
+            equity = cash + sum(
+                p["shares"] * float(close.at[stamp, p["code"]]) for p in open_pos
+                if p["code"] in close.columns and np.isfinite(close.at[stamp, p["code"]]))
+            budget = min(cash, equity / max_positions)
+            if budget <= capital * 0.005 or not np.isfinite(row.진입) or row.진입 <= 0:
+                continue
+            shares = budget / row.진입
+            cash -= budget
+            open_pos.append({
+                "code": row.code, "shares": shares, "exit_date": row.청산일,
+                "exit_price": row.청산 * (1 - 0.0014),   # 청산 편도 비용
+                "ret": row.수익,
+            })
+
+        value = 0.0
+        for pos in open_pos:
+            price = close.at[stamp, pos["code"]] if pos["code"] in close.columns else np.nan
+            if not np.isfinite(price):
+                price = pos["exit_price"]
+            value += pos["shares"] * float(price)
+        curve.append((stamp, cash + value))
+
+    equity = pd.Series(dict(curve))
+    years = max((equity.index[-1] - equity.index[0]).days / 365.25, 1e-9)
+    monthly = equity.resample("ME").last()
+    rolling = monthly.pct_change(12).dropna()
+    stats = {
+        "연수익": float((equity.iloc[-1] / capital) ** (1 / years) - 1),
+        "최대낙폭": float((equity / equity.cummax() - 1).min()),
+        "12개월 양수율": float((rolling > 0).mean()) if len(rolling) else np.nan,
+        "매매 수": len(filled),
+        "자리없어 못산 신호": skipped,
+        "승률": float(np.mean(np.array(filled) > 0)) if filled else np.nan,
+        "건당 평균": float(np.mean(filled)) if filled else np.nan,
+        "최종": float(equity.iloc[-1]),
+    }
+    return equity, stats

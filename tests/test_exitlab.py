@@ -5,8 +5,8 @@ import pandas as pd
 import pytest
 
 from tsignal.evaluation.exitlab import (
-    Exit, baseline_events, by_year, compare, insurance_cost, resolve,
-    split_by_regime, summarise,
+    Exit, baseline_events, by_year, compare, insurance_cost, portfolio,
+    resolve, split_by_regime, summarise,
 )
 
 
@@ -199,3 +199,67 @@ def test_a_rule_that_loses_in_both_regimes_is_never_insurance():
     assert out.iloc[0]["보험금"] < 0
     assert not out.iloc[0]["보험 성립"]
     assert np.isnan(out.iloc[0]["손익분기 하락비중"])
+
+
+def _panel(n=300, seed=0):
+    rng = np.random.default_rng(seed)
+    index = pd.date_range("2020-01-01", periods=n, freq="B", tz="Asia/Seoul")
+    out = {}
+    for code in ("A", "B", "C"):
+        price = 100 * np.cumprod(1 + rng.normal(0.0005, 0.02, n))
+        out[code] = pd.DataFrame(
+            {"open": price, "high": price * 1.02, "low": price * 0.98,
+             "close": price, "volume": 1000.0}, index=index)
+    return out, index
+
+
+def test_portfolio_respects_the_slot_limit():
+    """자리가 1개면 같은 날 뜬 신호 3개 중 1개만 산다."""
+    candles, index = _panel()
+    events = {}
+    for code in candles:
+        hit = pd.Series(False, index=index)
+        hit.iloc[10] = True
+        events[code] = hit
+    trades = resolve(events, candles, None, rule=Exit("t", horizon=20))
+    _, stats = portfolio(trades, candles, calendar=index, max_positions=1)
+    assert stats["매매 수"] == 1
+    assert stats["자리없어 못산 신호"] == 2
+
+
+def test_portfolio_rank_decides_who_gets_the_slot():
+    candles, index = _panel(seed=5)
+    events = {c: pd.Series(False, index=index) for c in candles}
+    for c in events:
+        events[c].iloc[10] = True
+    trades = resolve(events, candles, None, rule=Exit("t", horizon=20))
+    entry = trades["진입일"].iloc[0]
+    rank = pd.Series(
+        {("A", entry): 1.0, ("B", entry): 9.0, ("C", entry): 5.0})
+    rank.index = pd.MultiIndex.from_tuples(rank.index)
+    eq_b, _ = portfolio(trades, candles, calendar=index, max_positions=1, rank=rank)
+    eq_a, _ = portfolio(trades, candles, calendar=index, max_positions=1)
+    # B 가 1순위이므로 B 의 결과를 따라간다 — 순서만 따랐을 때와 달라야 한다
+    assert not np.allclose(eq_a.to_numpy(), eq_b.to_numpy())
+
+
+def test_portfolio_marks_open_positions_at_market():
+    """진입가로만 평가하면 최대낙폭이 실제보다 작게 나온다."""
+    index = pd.date_range("2020-01-01", periods=60, freq="B", tz="Asia/Seoul")
+    price = np.r_[np.full(5, 100.0), np.linspace(100, 50, 30), np.full(25, 50.0)]
+    frame = pd.DataFrame({"open": price, "high": price, "low": price,
+                          "close": price, "volume": 1.0}, index=index)
+    hit = pd.Series(False, index=index)
+    hit.iloc[2] = True
+    trades = resolve({"A": hit}, {"A": frame}, None, rule=Exit("t", horizon=50))
+    _, stats = portfolio(trades, {"A": frame}, calendar=index, max_positions=1)
+    assert stats["최대낙폭"] < -0.30      # 보유 중 반토막이 잔고에 보여야 한다
+
+
+def test_portfolio_frees_the_slot_after_the_exit():
+    candles, index = _panel(seed=9)
+    hit = pd.Series(False, index=index)
+    hit.iloc[[10, 40]] = True
+    trades = resolve({"A": hit}, candles, None, rule=Exit("t", horizon=20))
+    _, stats = portfolio(trades, candles, calendar=index, max_positions=1)
+    assert stats["매매 수"] == 2 and stats["자리없어 못산 신호"] == 0
