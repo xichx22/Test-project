@@ -124,7 +124,7 @@ details pre{font-family:var(--mono);font-size:11.5px;background:var(--sunk);padd
 
 <div class="wrap">
 <header>
-  <p class="eyebrow">규칙 ⑦ · MFI 과매도 → 컵앤핸들 돌파</p>
+  <p class="eyebrow">규칙 ⑤ · 컵앤핸들 돌파 + 20일 신고가</p>
   <h1>용돈 계좌 매매 일지</h1>
   <p class="sub">검증에서 살아남은 규칙 하나만 적는다. 규칙을 지킨 매매와 어긴 매매를 갈라서 기록해야, 나중에 성적이 나빴을 때 <b>규칙이 틀린 것인지 내가 어긴 것인지</b> 구분할 수 있다.</p>
 </header>
@@ -132,7 +132,7 @@ details pre{font-family:var(--mono);font-size:11.5px;background:var(--sunk);padd
 <div class="rulecard">
   <h2>이 일지가 따르는 규칙</h2>
   <ul class="steps">
-    <li><span class="stepn">매수</span><span>MFI가 20 아래로 갔다가 다시 20 위로 올라온 뒤, <b>20거래일 안에</b> 컵앤핸들 돌파가 나오면 그 돌파일 종가로 확정하고 <b>다음 날 시가</b>에 산다.</span></li>
+    <li><span class="stepn">매수</span><span>컵앤핸들 돌파(종가가 손잡이 고점을 넘고 거래량이 50일 평균의 1.4배 이상)가 <b>20일 신고가를 겸할 때</b>. 돌파일 종가로 확정하고 <b>다음 날 시가</b>에 산다.</span></li>
     <li><span class="stepn">금액</span><span>한 자리 <b>33.3만원</b>. 자리가 비고 현금이 있을 때만. 없으면 그냥 넘긴다.</span></li>
     <li><span class="stepn">매도</span><span>먼저 오는 쪽 — <b>+20% 도달</b> 또는 <b>60거래일 경과</b>. <b>손절은 걸지 않는다.</b></span></li>
     <li><span class="stepn">제외</span><span>20일 평균 거래대금 <b>3억원 미만</b>은 사지 않는다.</span></li>
@@ -148,7 +148,7 @@ details pre{font-family:var(--mono);font-size:11.5px;background:var(--sunk);padd
       <div class="f"><label for="code">종목코드</label><input id="code" inputmode="numeric" maxlength="6" placeholder="005930" required></div>
       <div class="f"><label for="name">종목명</label><input id="name" placeholder="삼성전자" required></div>
       <div class="f"><label for="sigdate">돌파일 (신호)</label><input id="sigdate" type="date" required></div>
-      <div class="f"><label for="mfidate">MFI 탈출일</label><input id="mfidate" type="date" required></div>
+      <div class="f"><label for="pivot">돌파선 (원)</label><input id="pivot" inputmode="decimal" placeholder="7650"><span class="hint">손잡이 고점 — 이 값을 넘어야 신호다</span></div>
       <div class="f"><label for="buydate">체결일</label><input id="buydate" type="date" required></div>
       <div class="f"><label for="price">체결가 (원)</label><input id="price" inputmode="decimal" placeholder="9250" required></div>
       <div class="f"><label for="qty">수량 (주)</label><input id="qty" inputmode="numeric" placeholder="자동 계산" ><span class="hint" id="qtyhint">33.3만원 기준 수량이 자동으로 들어간다</span></div>
@@ -157,8 +157,8 @@ details pre{font-family:var(--mono);font-size:11.5px;background:var(--sunk);padd
     <fieldset>
       <legend>사기 전 확인</legend>
       <div class="checks">
-        <label class="chk"><input type="checkbox" id="c1"><span><b>MFI가 먼저 왔다</b> — MFI 탈출일이 돌파일보다 앞이고, 둘 사이가 20거래일 이내다</span></label>
-        <label class="chk"><input type="checkbox" id="c2"><span><b>다음 날 시가에 샀다</b> — 돌파일 종가에 뇌동매수하지 않았다</span></label>
+        <label class="chk"><input type="checkbox" id="c1"><span><b>20일 신고가를 겸했다</b> — 돌파일 종가가 직전 20봉 고가를 모두 넘었다</span></label>
+        <label class="chk"><input type="checkbox" id="c2"><span><b>돌파를 확인하고 샀다</b> — 다음 날 시가 또는 그에 준하는 가격(시간외 포함). 돌파 중에 뇌동매수하지 않았다</span></label>
         <label class="chk"><input type="checkbox" id="c3"><span><b>거래대금 3억 이상</b>이다</span></label>
         <label class="chk"><input type="checkbox" id="c4"><span><b>빈 자리가 있었다</b> — 이미 찬 자리를 억지로 늘리지 않았다</span></label>
       </div>
@@ -187,11 +187,11 @@ details pre{font-family:var(--mono);font-size:11.5px;background:var(--sunk);padd
 
 <p class="foot">
   수익률은 <b>왕복 비용 0.28%</b>(수수료 + 세금)를 뺀 값이다. 목표가는 체결가의 1.20배, 만기는 60거래일(달력으로 약 84일) 뒤로 잡는다 — 실제 만기일은 휴장일에 따라 며칠 차이가 날 수 있으니 표의 날짜는 눈금으로만 쓴다.<br><br>
-  검증 근거는 <a href="https://claude.ai/code/artifact/10d0fdc5-381f-451b-b151-41c06acc8a0d">매매 신호 검증 원장</a>의 「굴림 창」 절에 있다. 191개 창에서 현금을 81%, 지수가 내린 창에서도 76% 이겼고, 중앙값인 해에 540만원 넣어 +37.5만원, <b>최악의 해에는 −42만원</b>이었다.
+  검증 근거는 <a href="https://claude.ai/code/artifact/10d0fdc5-381f-451b-b151-41c06acc8a0d">매매 신호 검증 원장</a>의 「굴림 창」 절에 있다. 191개 창(시작 자금 100만원)에서 계좌 IRR 중앙 <b>+12.96%</b>로 ⑦·①·② 중 1위였다. 540만원 넣어 중앙값인 해 <b>+40.8만원</b>, <b>최악의 해에는 −126.8만원</b>이다. 계좌가 1,500만원을 넘으면 신호를 다 소화하지 못해 현금이 쌓이기 시작한다.
 </p>
 </div>
 
-<script type="application/json" id="state">{"trades":[]}</script>
+<script type="application/json" id="state">{"trades": [{"id": "t_nice036800", "code": "036800", "name": "나이스정보통신", "sigdate": "2026-09-01", "pivot": 7650, "buydate": "2026-09-01", "price": 7900, "qty": 42, "turnover": "118", "due": "2026-12-01", "checks": {"c1": true, "c2": true, "c3": true, "c4": true}, "memo": "09-01 종가 7,960 으로 돌파선 7,650 돌파, 거래량 2.8배. 20일 신고가 겸함. NXT 시간외 7,900 에 체결 — 검증은 다음날 시가 기준인데 과거 5,250건에서 다음날 시가가 종가보다 평균 +0.43% 높았으므로(t=16.86) 시가보다 유리하게 잡은 셈.", "exitdate": "", "exitPrice": 0, "reason": ""}]}</script>
 <script id="app">
 (function(){
   "use strict";
@@ -232,8 +232,8 @@ details pre{font-family:var(--mono);font-size:11.5px;background:var(--sunk);padd
   }
   function broken(t){
     var why = [];
-    if (!t.checks.c1) why.push("MFI 선행 미확인");
-    if (!t.checks.c2) why.push("종가 매수");
+    if (!t.checks.c1) why.push("신고가 미확인");
+    if (!t.checks.c2) why.push("돌파 중 매수");
     if (!t.checks.c3) why.push("거래대금 부족");
     if (!t.checks.c4) why.push("자리 초과");
     if (t.turnover !== "" && t.turnover != null && Number(t.turnover) < 3) {
@@ -318,10 +318,10 @@ details pre{font-family:var(--mono);font-size:11.5px;background:var(--sunk);padd
           "</tr>";
         }).join("") + "</tbody></table></div>";
       el("backup").hidden = false;
-      el("csv").textContent = ["코드,종목,돌파일,MFI일,체결일,체결가,수량,청산일,청산가,수익률%,사유,규칙대로"].concat(
+      el("csv").textContent = ["코드,종목,돌파일,돌파선,체결일,체결가,수량,청산일,청산가,수익률%,사유,규칙대로"].concat(
         state.trades.map(function(t){
           var r = ret(t);
-          return [t.code,t.name,t.sigdate,t.mfidate,t.buydate,t.price,t.qty,
+          return [t.code,t.name,t.sigdate,t.pivot||"",t.buydate,t.price,t.qty,
             t.exitdate||"",t.exitPrice||"",r==null?"":r.toFixed(2),t.reason||"",
             broken(t).length?"N":"Y"].join(",");
         })).join("\n");
@@ -416,13 +416,13 @@ details pre{font-family:var(--mono);font-size:11.5px;background:var(--sunk);padd
     if (!(p > 0)) { msg.className = "msg err"; msg.textContent = "체결가를 확인해라."; return; }
     var q = parseInt(String(qtyEl.value).replace(/,/g, ""), 10);
     if (!(q > 0)) q = Math.floor(SLOT / p);
-    var sig = el("sigdate").value, mfi = el("mfidate").value;
-    if (mfi > sig) { msg.className = "msg err"; msg.textContent = "MFI 탈출일이 돌파일보다 뒤다. 규칙은 MFI가 먼저다."; return; }
+    var sig = el("sigdate").value;
+    var pv = parseFloat(String(el("pivot").value).replace(/,/g, "")) || 0;
     var buy = el("buydate").value;
     state.trades.push({
       id: "t" + Date.now().toString(36),
       code: el("code").value.trim(), name: el("name").value.trim(),
-      sigdate: sig, mfidate: mfi, buydate: buy,
+      sigdate: sig, pivot: pv, buydate: buy,
       price: p, qty: q, turnover: el("turnover").value.trim(),
       due: addDays(buy, HOLD_DAYS),
       checks: {c1: el("c1").checked, c2: el("c2").checked, c3: el("c3").checked, c4: el("c4").checked},
