@@ -6,7 +6,10 @@
 import glob, os, sys, numpy as np, pandas as pd
 from tsignal.signals.patterns import CupHandleParams
 from tsignal.indicators.volume import mfi
-P=CupHandleParams(); DAYS=int(sys.argv[1]) if len(sys.argv)>1 else 3
+P=CupHandleParams()
+ARGS=[a for a in sys.argv[1:] if not a.startswith("--")]
+DAYS=int(ARGS[0]) if ARGS else 3
+ROOT="data_live/1d" if "--live" in sys.argv else "data_wide/1d"
 uni=pd.read_csv("data_wide/universe.csv",dtype=str).set_index("code")
 
 def fired(high,low,close,volume,t,avgv):
@@ -46,7 +49,7 @@ def fired(high,low,close,volume,t,avgv):
     return None
 
 rows=[]; last_seen=None
-for path in sorted(glob.glob("data_wide/1d/*.csv")):
+for path in sorted(glob.glob(f"{ROOT}/*.csv")):
     code=os.path.basename(path)[:-4]
     d=pd.read_csv(path,index_col=0,parse_dates=[0])
     if len(d)<400: continue

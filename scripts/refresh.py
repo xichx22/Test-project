@@ -4,8 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 from tsignal.datasource.naver import NaverDataSource
 from tsignal.datasource.base import Interval
 TODAY=pd.Timestamp.now(tz="Asia/Seoul").normalize()
-files=sorted(glob.glob("data_wide/1d/*.csv"))
-print(f"대상 {len(files)}종목 · 오늘 {TODAY.date()}", flush=True)
+ROOT="data_live/1d" if "--live" in sys.argv else "data_wide/1d"
+KEEP=760          # --live 는 최근 3년치만 유지한다
+files=sorted(glob.glob(f"{ROOT}/*.csv"))
+print(f"대상 {len(files)}종목 · {ROOT} · 오늘 {TODAY.date()}", flush=True)
 COLS=["open","high","low","close","volume"]
 def one(path):
     code=os.path.basename(path)[:-4]
@@ -22,6 +24,7 @@ def one(path):
         merged=pd.concat([old[COLS],new])
         merged=merged[~merged.index.duplicated(keep="last")].sort_index()
         added=len(merged)-len(old)
+        if ROOT.startswith("data_live"): merged=merged.tail(KEEP)
         merged.to_csv(path)
         return code,added,None
     except Exception as e:

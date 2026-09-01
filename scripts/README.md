@@ -17,8 +17,17 @@
 
 ## 매일 하는 일
 
-    .venv/bin/python scripts/refresh.py     # 장 마감 후 일봉 갱신
-    .venv/bin/python scripts/today.py 3     # 최근 3거래일 신호
+    .venv/bin/python scripts/refresh.py --live   # 장 마감 후 일봉 갱신
+    .venv/bin/python scripts/today.py 3 --live   # 최근 3거래일 신호
+    git add data_live && git commit -m "일봉 갱신 YYYY-MM-DD" && git push
+
+`--live` 는 `data_live/1d`(1,064종목 × 최근 760봉, 약 53MB)를 쓴다.
+이 폴더는 **저장소에 커밋한다** — 새 세션이 clone 후 빠진 날짜만 받으면
+되므로 전체 재수집(20분 이상)이 필요 없다. 검출기는 종목당 최대 385봉만
+보므로 760봉이면 충분하고, 21년치 `data_wide/`(257MB, gitignore)와
+같은 신호가 나오는 것을 확인했다.
+
+저장소 증가량은 하루 약 132KB(git gc 후), 1년 약 32MB다.
 
 신호가 뜬 다음 날 **시가**에 산다. 종가로 신호를 확정하므로 그날은 못 산다 —
 이 하루는 모든 백테스트에 이미 들어가 있다.

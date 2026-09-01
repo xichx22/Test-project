@@ -17,3 +17,7 @@ reports/
 #   python -m tsignal fetch-universe --root data_wide \
 #       --kospi 600 --kosdaq 600 --count 5000 --min-bars 800
 data_wide/
+
+# 매일 신호 조회용 최근 3년치(1,064종목 × 760봉, 약 53MB → 팩 22MB)는
+# 커밋한다. 새 세션이 clone 후 빠진 날짜만 받으면 되므로 재수집이 없다.
+# 갱신은 scripts/refresh.py --live
