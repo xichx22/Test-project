@@ -98,26 +98,31 @@ b.nm{font-weight:600}
 
 <section>
   <div class="shead"><h2>먼저, 이름</h2><span class="tag">번호 → 이름</span></div>
+  <div class="call" style="border-left-color:var(--pass);background:var(--pass-bg);margin:0 0 20px">
+    <p class="lbl" style="color:var(--pass)">용어 — 컵앤핸들과 돌파는 다른 것이다</p>
+    <p><b>컵앤핸들은 모양이다.</b> 오르던 종목이 완만한 U자로 내려갔다 올라와 좌우 테두리 높이가 비슷해지고(컵), 그 오른쪽 입술 근처에서 5~20일 짧게 눌린다(손잡이).</p>
+    <p><b>돌파는 사건이다.</b> 모양이 다 만들어져도 신호가 아니다. <b>손잡이 고점을 종가로 뚫고, 그날 거래량이 50일 평균의 1.4배 이상</b>일 때 비로소 매수 신호가 뜬다. 아래 표에서 “컵앤핸들”이라고 쓴 것은 전부 <b>이 돌파가 일어난 날</b>을 뜻한다.</p>
+  </div>
   <p class="lead">전부 <b>컵앤핸들</b>(바닥을 다지고 손잡이를 만든 뒤 거래량을 터뜨리며 돌파하는 모양)과 <b>과매도 반등</b>(MFI가 20 아래로 처박혔다가 다시 20 위로 올라오는 날)을 어떻게 조합하느냐의 차이다.</p>
   <div class="scroll"><table>
     <caption>신호가 적은 순 — 위로 갈수록 까다롭고, 아래로 갈수록 자주 산다</caption>
     <thead><tr><th class="l">이름</th><th class="l">언제 사나</th><th>16년 신호</th><th>1년에</th></tr></thead>
     <tbody>
-      <tr><td class="l"><span class="no">⑦</span> <b class="nm">과매도 후 돌파</b> <span class="chip c-pass">현재 v1</span></td>
+      <tr><td class="l"><span class="no">⑦</span> <b class="nm">과매도 후 컵앤핸들</b> <span class="chip c-pass">현재 v1</span></td>
           <td class="l">과매도 반등이 먼저 오고, <b>20거래일 안에</b> 컵앤핸들 돌파가 이어질 때</td><td class="n">467</td><td class="n">29건</td></tr>
-      <tr><td class="l"><span class="no">⑥</span> <b class="nm">과매도 + 돌파 (순서 무관)</b></td>
+      <tr><td class="l"><span class="no">⑥</span> <b class="nm">과매도 + 컵앤핸들 (순서 무관)</b></td>
           <td class="l">둘이 20거래일 안에 같이 떴을 때. 순서를 안 따진다</td><td class="n">969</td><td class="n">61건</td></tr>
-      <tr><td class="l"><span class="no">③</span> <b class="nm">돌파 + 거래량 폭발</b></td>
+      <tr><td class="l"><span class="no">③</span> <b class="nm">컵앤핸들 + 거래량 폭발</b></td>
           <td class="l">컵앤핸들 돌파일에 거래량이 20일 평균의 <b>3배 이상</b></td><td class="n">2,187</td><td class="n">137건</td></tr>
-      <tr><td class="l"><span class="no">④</span> <b class="nm">돌파 + 삼각수렴</b></td>
+      <tr><td class="l"><span class="no">④</span> <b class="nm">컵앤핸들 + 삼각수렴</b></td>
           <td class="l">컵앤핸들과 상승삼각형이 겹칠 때</td><td class="n">3,172</td><td class="n">198건</td></tr>
-      <tr><td class="l"><span class="no">⑤</span> <b class="nm">돌파 + 20일 신고가</b></td>
+      <tr><td class="l"><span class="no">⑤</span> <b class="nm">컵앤핸들 + 20일 신고가</b></td>
           <td class="l">컵앤핸들 돌파가 20일 신고가를 겸할 때</td><td class="n">5,250</td><td class="n">328건</td></tr>
-      <tr><td class="l"><span class="no">①</span> <b class="nm">돌파만</b></td>
-          <td class="l">컵앤핸들 돌파. 다른 조건 없음</td><td class="n">7,512</td><td class="n">470건</td></tr>
+      <tr><td class="l"><span class="no">①</span> <b class="nm">컵앤핸들만</b></td>
+          <td class="l">컵앤핸들 모양이 완성된 뒤 <b>손잡이 고점을 뚫는 날</b>. 다른 조건 없음</td><td class="n">7,512</td><td class="n">470건</td></tr>
       <tr><td class="l"><span class="no">⑧</span> <b class="nm">과매도만</b></td>
-          <td class="l">MFI가 20을 다시 넘는 날. 컵앤핸들 안 봄</td><td class="n">35,137</td><td class="n">2,196건</td></tr>
-      <tr><td class="l"><span class="no">②</span> <b class="nm">돌파 또는 과매도</b></td>
+          <td class="l">MFI가 20을 다시 넘는 날. <b>컵앤핸들 모양을 아예 안 본다</b></td><td class="n">35,137</td><td class="n">2,196건</td></tr>
+      <tr><td class="l"><span class="no">②</span> <b class="nm">컵앤핸들 또는 과매도</b></td>
           <td class="l">둘 중 <b>아무거나</b> 뜨면 산다</td><td class="n">42,628</td><td class="n">2,664건</td></tr>
       <tr><td class="l"><span class="no">⑪</span> <b class="nm">과매도 신호 전부</b></td>
           <td class="l">MFI·RSI·윌리엄스 중 아무거나</td><td class="n">236,280</td><td class="n">14,768건</td></tr>
@@ -132,14 +137,14 @@ b.nm{font-weight:600}
     <caption>넣은 돈 4,860만원 (100만 시작 + 매월 40만 × 119회) · 값은 83개 창의 중앙값</caption>
     <thead><tr><th class="l">이름</th><th>투자 비중</th><th>10년 뒤</th><th>번 돈</th><th>운 나쁜 10년</th><th>최대 평가손</th><th>현금 이김</th><th>지수 이김</th></tr></thead>
     <tbody>
-      <tr><td class="l"><span class="no">⑦</span> 과매도 후 돌파 <span class="chip c-pass">v1</span></td><td class="n">11.4%</td><td class="n">5,988만</td><td class="n">+1,128만</td><td class="n pos">+3.33%</td><td class="n pos">−7.9%</td><td class="n">100%</td><td class="n neg">17%</td></tr>
-      <tr><td class="l"><span class="no">⑥</span> 과매도 + 돌파</td><td class="n">21.8%</td><td class="n">6,201만</td><td class="n">+1,341만</td><td class="n pos">+3.87%</td><td class="n pos">−9.9%</td><td class="n">100%</td><td class="n neg">28%</td></tr>
-      <tr><td class="l"><span class="no">③</span> 돌파 + 거래량 폭발</td><td class="n">33.5%</td><td class="n">6,707만</td><td class="n">+1,847만</td><td class="n pos">+4.51%</td><td class="n">−11.1%</td><td class="n">100%</td><td class="n">53%</td></tr>
-      <tr class="dim"><td class="l"><span class="no">④</span> 돌파 + 삼각수렴</td><td class="n">44.3%</td><td class="n">6,346만</td><td class="n">+1,486만</td><td class="n">+4.38%</td><td class="n">−16.1%</td><td class="n">100%</td><td class="n neg">37%</td></tr>
-      <tr class="pick"><td class="l"><span class="no">⑤</span> <b class="nm">돌파 + 20일 신고가</b></td><td class="n">59.3%</td><td class="n">6,833만</td><td class="n">+1,973만</td><td class="n pos"><b>+5.70%</b></td><td class="n">−17.1%</td><td class="n">100%</td><td class="n">60%</td></tr>
-      <tr><td class="l"><span class="no">①</span> 돌파만</td><td class="n">72.1%</td><td class="n">6,837만</td><td class="n">+1,977만</td><td class="n">+4.41%</td><td class="n neg">−29.7%</td><td class="n">100%</td><td class="n">57%</td></tr>
+      <tr><td class="l"><span class="no">⑦</span> 과매도 후 컵앤핸들 <span class="chip c-pass">v1</span></td><td class="n">11.4%</td><td class="n">5,988만</td><td class="n">+1,128만</td><td class="n pos">+3.33%</td><td class="n pos">−7.9%</td><td class="n">100%</td><td class="n neg">17%</td></tr>
+      <tr><td class="l"><span class="no">⑥</span> 과매도 + 컵앤핸들</td><td class="n">21.8%</td><td class="n">6,201만</td><td class="n">+1,341만</td><td class="n pos">+3.87%</td><td class="n pos">−9.9%</td><td class="n">100%</td><td class="n neg">28%</td></tr>
+      <tr><td class="l"><span class="no">③</span> 컵앤핸들 + 거래량 폭발</td><td class="n">33.5%</td><td class="n">6,707만</td><td class="n">+1,847만</td><td class="n pos">+4.51%</td><td class="n">−11.1%</td><td class="n">100%</td><td class="n">53%</td></tr>
+      <tr class="dim"><td class="l"><span class="no">④</span> 컵앤핸들 + 삼각수렴</td><td class="n">44.3%</td><td class="n">6,346만</td><td class="n">+1,486만</td><td class="n">+4.38%</td><td class="n">−16.1%</td><td class="n">100%</td><td class="n neg">37%</td></tr>
+      <tr class="pick"><td class="l"><span class="no">⑤</span> <b class="nm">컵앤핸들 + 20일 신고가</b></td><td class="n">59.3%</td><td class="n">6,833만</td><td class="n">+1,973만</td><td class="n pos"><b>+5.70%</b></td><td class="n">−17.1%</td><td class="n">100%</td><td class="n">60%</td></tr>
+      <tr><td class="l"><span class="no">①</span> 컵앤핸들만</td><td class="n">72.1%</td><td class="n">6,837만</td><td class="n">+1,977만</td><td class="n">+4.41%</td><td class="n neg">−29.7%</td><td class="n">100%</td><td class="n">57%</td></tr>
       <tr class="dim"><td class="l"><span class="no">⑧</span> 과매도만</td><td class="n">95.8%</td><td class="n">7,041만</td><td class="n">+2,181만</td><td class="n neg"><b>−1.97%</b></td><td class="n neg">−40.3%</td><td class="n neg">94%</td><td class="n">52%</td></tr>
-      <tr class="pick"><td class="l"><span class="no">②</span> <b class="nm">돌파 또는 과매도</b></td><td class="n">97.3%</td><td class="n"><b>8,437만</b></td><td class="n"><b>+3,577만</b></td><td class="n wrn">+1.33%</td><td class="n neg">−39.7%</td><td class="n">99%</td><td class="n pos"><b>86%</b></td></tr>
+      <tr class="pick"><td class="l"><span class="no">②</span> <b class="nm">컵앤핸들 또는 과매도</b></td><td class="n">97.3%</td><td class="n"><b>8,437만</b></td><td class="n"><b>+3,577만</b></td><td class="n wrn">+1.33%</td><td class="n neg">−39.7%</td><td class="n">99%</td><td class="n pos"><b>86%</b></td></tr>
       <tr class="dim"><td class="l"><span class="no">⑪</span> 과매도 신호 전부</td><td class="n">98.6%</td><td class="n">8,006만</td><td class="n">+3,146만</td><td class="n wrn">+0.78%</td><td class="n neg">−40.3%</td><td class="n">99%</td><td class="n">83%</td></tr>
       <tr class="base"><td class="l">지수 적립 (KODEX 200)</td><td class="n">100%</td><td class="n">6,619만</td><td class="n">+1,759만</td><td class="n neg">−1.03%</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr>
       <tr class="base"><td class="l">현금 (파킹 연 2.5%)</td><td class="n">0%</td><td class="n">5,502만</td><td class="n">+642만</td><td class="n">+2.43%</td><td class="n">0%</td><td class="n">—</td><td class="n">—</td></tr>
@@ -149,7 +154,7 @@ b.nm{font-weight:600}
 
   <div class="cards">
     <div class="card win">
-      <h3>② 돌파 또는 과매도</h3>
+      <h3>② 컵앤핸들 또는 과매도</h3>
       <p class="who">가장 많이 버는 쪽</p>
       <dl>
         <dt>10년 뒤</dt><dd>8,437만</dd>
@@ -160,7 +165,7 @@ b.nm{font-weight:600}
       <p class="note">돈의 97%가 항상 주식에 들어가 있다. 사실상 <b>“한국 주식을 계속 들고 종목만 바꾸는 것”</b>에 가깝다. 운 나쁜 10년이면 연 1.33% — 현금만도 못하다.</p>
     </div>
     <div class="card win">
-      <h3>⑤ 돌파 + 20일 신고가</h3>
+      <h3>⑤ 컵앤핸들 + 20일 신고가</h3>
       <p class="who">가장 꾸준한 쪽</p>
       <dl>
         <dt>10년 뒤</dt><dd>6,833만</dd>
@@ -171,7 +176,7 @@ b.nm{font-weight:600}
       <p class="note">9개 중 <b>운 나쁜 10년이 가장 좋다.</b> 어떤 10년을 골라도 연 5.7% 아래로 안 내려갔다. 평가손도 ②의 절반 이하다.</p>
     </div>
     <div class="card risk">
-      <h3>⑦ 과매도 후 돌파 <span class="chip c-pass">현재 v1</span></h3>
+      <h3>⑦ 과매도 후 컵앤핸들 <span class="chip c-pass">현재 v1</span></h3>
       <p class="who">가장 안 깨지지만, 가장 못 버는 쪽</p>
       <dl>
         <dt>10년 뒤</dt><dd>5,988만</dd>
@@ -191,12 +196,12 @@ b.nm{font-weight:600}
     <caption>1년 창 191개 · 넣은 돈 540만원 · 기준선 지수 +4.36% / 현금 +2.45%</caption>
     <thead><tr><th class="l">이름</th><th>1년 창 순위</th><th>하락장 방어</th><th>뽑기 운</th><th>10년 창 순위</th></tr></thead>
     <tbody>
-      <tr><td class="l"><span class="no">⑦</span> 과매도 후 돌파</td><td class="n pos">1위</td><td class="n pos">76%</td><td class="n pos">0.0%p</td><td class="n neg">9위</td></tr>
-      <tr><td class="l"><span class="no">⑥</span> 과매도 + 돌파</td><td class="n pos">2위</td><td class="n pos">72%</td><td class="n pos">0.7%p</td><td class="n neg">8위</td></tr>
-      <tr><td class="l"><span class="no">⑤</span> 돌파 + 20일 신고가</td><td class="n">4위</td><td class="n wrn">53%</td><td class="n neg">12.8%p</td><td class="n pos">4위</td></tr>
-      <tr><td class="l"><span class="no">③</span> 돌파 + 거래량 폭발</td><td class="n">3위</td><td class="n neg">49%</td><td class="n">7.3%p</td><td class="n">5위</td></tr>
-      <tr><td class="l"><span class="no">①</span> 돌파만</td><td class="n">5위</td><td class="n wrn">50%</td><td class="n neg">12.5%p</td><td class="n">3위</td></tr>
-      <tr><td class="l"><span class="no">②</span> 돌파 또는 과매도</td><td class="n neg">7위 (꼴찌)</td><td class="n neg">44%</td><td class="n neg">18.4%p</td><td class="n pos"><b>1위</b></td></tr>
+      <tr><td class="l"><span class="no">⑦</span> 과매도 후 컵앤핸들</td><td class="n pos">1위</td><td class="n pos">76%</td><td class="n pos">0.0%p</td><td class="n neg">9위</td></tr>
+      <tr><td class="l"><span class="no">⑥</span> 과매도 + 컵앤핸들</td><td class="n pos">2위</td><td class="n pos">72%</td><td class="n pos">0.7%p</td><td class="n neg">8위</td></tr>
+      <tr><td class="l"><span class="no">⑤</span> 컵앤핸들 + 20일 신고가</td><td class="n">4위</td><td class="n wrn">53%</td><td class="n neg">12.8%p</td><td class="n pos">4위</td></tr>
+      <tr><td class="l"><span class="no">③</span> 컵앤핸들 + 거래량 폭발</td><td class="n">3위</td><td class="n neg">49%</td><td class="n">7.3%p</td><td class="n">5위</td></tr>
+      <tr><td class="l"><span class="no">①</span> 컵앤핸들만</td><td class="n">5위</td><td class="n wrn">50%</td><td class="n neg">12.5%p</td><td class="n">3위</td></tr>
+      <tr><td class="l"><span class="no">②</span> 컵앤핸들 또는 과매도</td><td class="n neg">7위 (꼴찌)</td><td class="n neg">44%</td><td class="n neg">18.4%p</td><td class="n pos"><b>1위</b></td></tr>
     </tbody>
   </table></div>
   <p class="figcap"><b>하락장 방어</b> = 지수가 내린 68개 창에서 현금을 이긴 비율. <b>뽑기 운</b> = 같은 창에서 종목 고르는 순서만 바꿨을 때 결과가 벌어지는 폭 — 작을수록 운에 안 휘둘린다.</p>
@@ -215,10 +220,10 @@ b.nm{font-weight:600}
     <caption>급등장 미포함 10년 창 60개 (2020-01 ~ 2024-11 종료)</caption>
     <thead><tr><th class="l">이름</th><th>10년 뒤</th><th>운 나쁜 10년</th><th>최대 평가손</th><th>지수 이김</th></tr></thead>
     <tbody>
-      <tr><td class="l"><span class="no">⑦</span> 과매도 후 돌파</td><td class="n">5,971만</td><td class="n pos">+3.33%</td><td class="n pos">−7.9%</td><td class="n neg">22%</td></tr>
-      <tr class="pick"><td class="l"><span class="no">⑤</span> 돌파 + 20일 신고가</td><td class="n">6,791만</td><td class="n pos"><b>+5.78%</b></td><td class="n">−15.0%</td><td class="n">73%</td></tr>
+      <tr><td class="l"><span class="no">⑦</span> 과매도 후 컵앤핸들</td><td class="n">5,971만</td><td class="n pos">+3.33%</td><td class="n pos">−7.9%</td><td class="n neg">22%</td></tr>
+      <tr class="pick"><td class="l"><span class="no">⑤</span> 컵앤핸들 + 20일 신고가</td><td class="n">6,791만</td><td class="n pos"><b>+5.78%</b></td><td class="n">−15.0%</td><td class="n">73%</td></tr>
       <tr class="dim"><td class="l"><span class="no">⑧</span> 과매도만</td><td class="n">6,814만</td><td class="n neg"><b>−1.97%</b></td><td class="n neg">−40.6%</td><td class="n">57%</td></tr>
-      <tr class="pick"><td class="l"><span class="no">②</span> 돌파 또는 과매도</td><td class="n"><b>8,051만</b></td><td class="n wrn">+1.33%</td><td class="n neg">−40.1%</td><td class="n pos"><b>98%</b></td></tr>
+      <tr class="pick"><td class="l"><span class="no">②</span> 컵앤핸들 또는 과매도</td><td class="n"><b>8,051만</b></td><td class="n wrn">+1.33%</td><td class="n neg">−40.1%</td><td class="n pos"><b>98%</b></td></tr>
       <tr class="base"><td class="l">지수 적립</td><td class="n">—</td><td class="n neg">−1.03%</td><td class="n">—</td><td class="n">—</td></tr>
     </tbody>
   </table></div>
