@@ -1,0 +1,475 @@
+<title>용돈 계좌 매매 일지</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hahmlet:wght@500;700&family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style id="css">
+:root{
+  --paper:#F3F5F4; --surface:#FFFFFF; --sunk:#EBEEED; --field:#FFFFFF;
+  --ink:#131A19; --ink-2:#3B4744; --muted:#6A7773; --line:#DCE3E1; --rule:#C9D3D0;
+  --pass:#0E6B5E; --pass-bg:#E2F0ED;
+  --fail:#A64328; --fail-bg:#F6E7E1;
+  --warn:#836416; --warn-bg:#F3EDDC;
+  --display:"Hahmlet",Georgia,"Nanum Myeongjo",serif;
+  --body:"IBM Plex Sans KR",system-ui,-apple-system,"Malgun Gothic",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#0E1211; --surface:#161C1B; --sunk:#1B2221; --field:#111716;
+  --ink:#E7EDEB; --ink-2:#BAC6C3; --muted:#8E9C98; --line:#26302E; --rule:#2C3634;
+  --pass:#54C9B2; --pass-bg:#12302B;
+  --fail:#E58E6E; --fail-bg:#331E15;
+  --warn:#D3AF5A; --warn-bg:#2E2716;
+}}
+:root[data-theme="dark"]{
+  --paper:#0E1211; --surface:#161C1B; --sunk:#1B2221; --field:#111716;
+  --ink:#E7EDEB; --ink-2:#BAC6C3; --muted:#8E9C98; --line:#26302E; --rule:#2C3634;
+  --pass:#54C9B2; --pass-bg:#12302B;
+  --fail:#E58E6E; --fail-bg:#331E15;
+  --warn:#D3AF5A; --warn-bg:#2E2716;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
+  font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px 80px}
+h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* --- 머리 --- */
+header{padding:44px 0 20px;border-bottom:2px solid var(--ink)}
+.eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+  font-weight:600;margin:0 0 10px}
+h1{font-size:clamp(28px,4.4vw,42px);font-weight:700;line-height:1.15}
+.sub{color:var(--ink-2);margin:10px 0 0;max-width:62ch;font-size:15px}
+.sub a{color:var(--pass)}
+
+/* --- 규칙 카드 --- */
+.rulecard{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--pass);
+  margin:26px 0 0;padding:20px 22px}
+.rulecard h2{font-size:17px;font-weight:700;margin-bottom:12px}
+.steps{display:grid;gap:10px;margin:0;padding:0;list-style:none}
+.steps li{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:baseline;font-size:14.5px;color:var(--ink-2)}
+.steps b{color:var(--ink)}
+.stepn{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--pass);
+  background:var(--pass-bg);padding:2px 7px;border-radius:2px;white-space:nowrap}
+
+/* --- 요약 칩 --- */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;
+  background:var(--line);border:1px solid var(--line);margin:28px 0 0}
+.stat{background:var(--surface);padding:14px 16px}
+.stat dt{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+  font-weight:600;margin:0 0 4px}
+.stat dd{margin:0;font-family:var(--mono);font-size:21px;font-weight:500;line-height:1.2}
+.pos{color:var(--pass)} .neg{color:var(--fail)} .neu{color:var(--ink-2)}
+
+section{margin-top:44px}
+.shead{display:flex;align-items:baseline;gap:12px;padding-bottom:8px;
+  border-bottom:1px solid var(--rule);margin-bottom:18px}
+.shead h2{font-size:21px;font-weight:700}
+.shead .count{font-family:var(--mono);font-size:13px;color:var(--muted)}
+
+/* --- 폼 --- */
+form{background:var(--surface);border:1px solid var(--line);padding:20px 22px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px 16px}
+.f{display:flex;flex-direction:column;gap:5px;min-width:0}
+.f label{font-size:12px;font-weight:600;color:var(--ink-2);letter-spacing:.02em}
+.f input,.f select,.f textarea{font-family:var(--body);font-size:15px;color:var(--ink);
+  background:var(--field);border:1px solid var(--line);border-radius:0;padding:8px 10px;width:100%}
+.f input[type=number],.f input[inputmode]{font-family:var(--mono)}
+.f input:focus-visible,.f select:focus-visible,.f textarea:focus-visible,
+button:focus-visible,summary:focus-visible{outline:2px solid var(--pass);outline-offset:1px}
+.hint{font-size:11.5px;color:var(--muted);line-height:1.45}
+fieldset{border:1px solid var(--line);margin:16px 0 0;padding:14px 16px;background:var(--sunk)}
+legend{font-size:12px;font-weight:600;color:var(--ink-2);padding:0 6px}
+.checks{display:grid;gap:9px}
+.chk{display:grid;grid-template-columns:auto 1fr;gap:9px;align-items:start;font-size:13.5px;
+  color:var(--ink-2);cursor:pointer}
+.chk input{margin:3px 0 0;accent-color:var(--pass);width:15px;height:15px}
+.chk b{color:var(--ink);font-weight:600}
+.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px}
+button{font-family:var(--body);font-size:14px;font-weight:600;padding:9px 18px;
+  border:1px solid var(--ink);background:var(--ink);color:var(--paper);cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border-color:var(--rule)}
+button.mini{font-size:12px;font-weight:500;padding:5px 11px}
+button:disabled{opacity:.45;cursor:not-allowed}
+.msg{font-size:13px;color:var(--muted)}
+.msg.err{color:var(--fail)} .msg.ok{color:var(--pass)}
+
+/* --- 표 --- */
+.scroll{overflow-x:auto;border:1px solid var(--line);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:760px}
+th,td{padding:9px 12px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  font-weight:600;background:var(--sunk);position:sticky;top:0}
+td.l,th.l{text-align:left}
+tbody tr:last-child td{border-bottom:0}
+td.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tag{display:inline-block;font-size:10.5px;font-weight:600;letter-spacing:.04em;
+  padding:2px 7px;border-radius:2px;white-space:nowrap}
+.t-pass{background:var(--pass-bg);color:var(--pass)}
+.t-fail{background:var(--fail-bg);color:var(--fail)}
+.t-warn{background:var(--warn-bg);color:var(--warn)}
+.empty{padding:30px 22px;color:var(--muted);font-size:14px;background:var(--surface);
+  border:1px dashed var(--rule);text-align:center}
+.foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);
+  font-size:12.5px;color:var(--muted);max-width:70ch}
+.foot a{color:var(--pass)}
+details{margin-top:14px}
+summary{cursor:pointer;font-size:13px;color:var(--ink-2);font-weight:600}
+details pre{font-family:var(--mono);font-size:11.5px;background:var(--sunk);padding:12px;
+  overflow-x:auto;border:1px solid var(--line);margin:10px 0 0;white-space:pre-wrap;word-break:break-all}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:560px){header{padding-top:28px}.wrap{padding:0 14px 60px}}
+</style>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">규칙 ⑦ · MFI 과매도 → 컵앤핸들 돌파</p>
+  <h1>용돈 계좌 매매 일지</h1>
+  <p class="sub">검증에서 살아남은 규칙 하나만 적는다. 규칙을 지킨 매매와 어긴 매매를 갈라서 기록해야, 나중에 성적이 나빴을 때 <b>규칙이 틀린 것인지 내가 어긴 것인지</b> 구분할 수 있다.</p>
+</header>
+
+<div class="rulecard">
+  <h2>이 일지가 따르는 규칙</h2>
+  <ul class="steps">
+    <li><span class="stepn">매수</span><span>MFI가 20 아래로 갔다가 다시 20 위로 올라온 뒤, <b>20거래일 안에</b> 컵앤핸들 돌파가 나오면 그 돌파일 종가로 확정하고 <b>다음 날 시가</b>에 산다.</span></li>
+    <li><span class="stepn">금액</span><span>한 자리 <b>33.3만원</b>. 자리가 비고 현금이 있을 때만. 없으면 그냥 넘긴다.</span></li>
+    <li><span class="stepn">매도</span><span>먼저 오는 쪽 — <b>+20% 도달</b> 또는 <b>60거래일 경과</b>. <b>손절은 걸지 않는다.</b></span></li>
+    <li><span class="stepn">제외</span><span>20일 평균 거래대금 <b>3억원 미만</b>은 사지 않는다.</span></li>
+  </ul>
+</div>
+
+<dl class="stats" id="stats"></dl>
+
+<section>
+  <div class="shead"><h2>매수 기록</h2><span class="count">체결한 날 바로 적는다</span></div>
+  <form id="buyform" autocomplete="off">
+    <div class="grid">
+      <div class="f"><label for="code">종목코드</label><input id="code" inputmode="numeric" maxlength="6" placeholder="005930" required></div>
+      <div class="f"><label for="name">종목명</label><input id="name" placeholder="삼성전자" required></div>
+      <div class="f"><label for="sigdate">돌파일 (신호)</label><input id="sigdate" type="date" required></div>
+      <div class="f"><label for="mfidate">MFI 탈출일</label><input id="mfidate" type="date" required></div>
+      <div class="f"><label for="buydate">체결일</label><input id="buydate" type="date" required></div>
+      <div class="f"><label for="price">체결가 (원)</label><input id="price" inputmode="decimal" placeholder="9250" required></div>
+      <div class="f"><label for="qty">수량 (주)</label><input id="qty" inputmode="numeric" placeholder="자동 계산" ><span class="hint" id="qtyhint">33.3만원 기준 수량이 자동으로 들어간다</span></div>
+      <div class="f"><label for="turnover">거래대금 (억원)</label><input id="turnover" inputmode="decimal" placeholder="8.9"><span class="hint">20일 평균. 3억 미만이면 규칙 밖이다</span></div>
+    </div>
+    <fieldset>
+      <legend>사기 전 확인</legend>
+      <div class="checks">
+        <label class="chk"><input type="checkbox" id="c1"><span><b>MFI가 먼저 왔다</b> — MFI 탈출일이 돌파일보다 앞이고, 둘 사이가 20거래일 이내다</span></label>
+        <label class="chk"><input type="checkbox" id="c2"><span><b>다음 날 시가에 샀다</b> — 돌파일 종가에 뇌동매수하지 않았다</span></label>
+        <label class="chk"><input type="checkbox" id="c3"><span><b>거래대금 3억 이상</b>이다</span></label>
+        <label class="chk"><input type="checkbox" id="c4"><span><b>빈 자리가 있었다</b> — 이미 찬 자리를 억지로 늘리지 않았다</span></label>
+      </div>
+    </fieldset>
+    <div class="f" style="margin-top:14px"><label for="memo">메모 (선택)</label><textarea id="memo" rows="2" placeholder="왜 샀는지, 망설였다면 무엇 때문인지"></textarea></div>
+    <div class="actions">
+      <button type="submit" id="addbtn">기록하기</button>
+      <span class="msg" id="buymsg"></span>
+    </div>
+  </form>
+</section>
+
+<section>
+  <div class="shead"><h2>보유 중</h2><span class="count" id="opencount"></span></div>
+  <div id="openwrap"></div>
+</section>
+
+<section>
+  <div class="shead"><h2>끝난 매매</h2><span class="count" id="donecount"></span></div>
+  <div id="donewrap"></div>
+  <details id="backup" hidden>
+    <summary>기록 내보내기 (CSV)</summary>
+    <pre id="csv"></pre>
+  </details>
+</section>
+
+<p class="foot">
+  수익률은 <b>왕복 비용 0.28%</b>(수수료 + 세금)를 뺀 값이다. 목표가는 체결가의 1.20배, 만기는 60거래일(달력으로 약 84일) 뒤로 잡는다 — 실제 만기일은 휴장일에 따라 며칠 차이가 날 수 있으니 표의 날짜는 눈금으로만 쓴다.<br><br>
+  검증 근거는 <a href="https://claude.ai/code/artifact/10d0fdc5-381f-451b-b151-41c06acc8a0d">매매 신호 검증 원장</a>의 「굴림 창」 절에 있다. 191개 창에서 현금을 81%, 지수가 내린 창에서도 76% 이겼고, 중앙값인 해에 540만원 넣어 +37.5만원, <b>최악의 해에는 −42만원</b>이었다.
+</p>
+</div>
+
+<script type="application/json" id="state">{"trades":[]}</script>
+<script id="app">
+(function(){
+  "use strict";
+  var TITLE = "용돈 계좌 매매 일지";
+  var SLOT = 333333, COST = 0.0028, TARGET = 1.20, HOLD_DAYS = 84;
+  var root = document;
+  var state;
+  try { state = JSON.parse(root.getElementById("state").textContent) || {}; }
+  catch(e){ state = {}; }
+  if (!Array.isArray(state.trades)) state.trades = [];
+
+  var el = function(id){ return root.getElementById(id); };
+  var won = function(n){ return Math.round(n).toLocaleString("ko-KR"); };
+  var pct = function(n){ return (n>=0?"+":"") + n.toFixed(2) + "%"; };
+  function esc(s){
+    return String(s==null?"":s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+  function addDays(iso, d){
+    var t = new Date(iso + "T00:00:00");
+    if (isNaN(t)) return "";
+    t.setDate(t.getDate() + d);
+    return t.toISOString().slice(0,10);
+  }
+  function daysLeft(iso){
+    var t = new Date(iso + "T00:00:00");
+    if (isNaN(t)) return null;
+    return Math.round((t - new Date(new Date().toDateString())) / 86400000);
+  }
+  function ret(t){
+    if (!t.exitPrice) return null;
+    return (t.exitPrice / t.price - 1 - COST) * 100;
+  }
+  function pnl(t){
+    var r = ret(t);
+    return r == null ? null : t.price * t.qty * r / 100;
+  }
+  function broken(t){
+    var why = [];
+    if (!t.checks.c1) why.push("MFI 선행 미확인");
+    if (!t.checks.c2) why.push("종가 매수");
+    if (!t.checks.c3) why.push("거래대금 부족");
+    if (!t.checks.c4) why.push("자리 초과");
+    if (t.turnover !== "" && t.turnover != null && Number(t.turnover) < 3) {
+      if (why.indexOf("거래대금 부족") < 0) why.push("거래대금 " + t.turnover + "억");
+    }
+    return why;
+  }
+
+  /* ---------- 그리기 ---------- */
+  function render(){
+    var open = state.trades.filter(function(t){ return !t.exitPrice; });
+    var done = state.trades.filter(function(t){ return t.exitPrice; });
+    var clean = state.trades.filter(function(t){ return broken(t).length === 0; });
+
+    var realized = done.reduce(function(a,t){ return a + (pnl(t) || 0); }, 0);
+    var wins = done.filter(function(t){ return ret(t) > 0; }).length;
+
+    el("stats").innerHTML = [
+      ["보유 중", open.length + " 자리", "neu"],
+      ["끝난 매매", done.length + " 건", "neu"],
+      ["승률", done.length ? Math.round(wins/done.length*100) + "%" : "—",
+        done.length ? (wins/done.length >= 0.5 ? "pos" : "neg") : "neu"],
+      ["실현 손익", (done.length ? (realized>=0?"+":"−") + won(Math.abs(realized)) + "원" : "—"),
+        realized > 0 ? "pos" : (realized < 0 ? "neg" : "neu")],
+      ["규칙대로", state.trades.length ? clean.length + " / " + state.trades.length : "—",
+        state.trades.length && clean.length === state.trades.length ? "pos" : "warn"]
+    ].map(function(s){
+      return '<div class="stat"><dt>' + s[0] + '</dt><dd class="' +
+        (s[2]==="warn"?"neu":s[2]) + '">' + esc(s[1]) + "</dd></div>";
+    }).join("");
+
+    el("opencount").textContent = open.length ? open.length + " 자리 · 한 자리 33.3만원" : "";
+    el("donecount").textContent = done.length ? done.length + " 건" : "";
+
+    /* 보유 중 */
+    if (!open.length) {
+      el("openwrap").innerHTML = '<p class="empty">보유 중인 자리가 없다. 신호가 뜬 날에만 산다 — 없으면 안 사는 것이 규칙이다.</p>';
+    } else {
+      el("openwrap").innerHTML = '<div class="scroll"><table><thead><tr>' +
+        '<th class="l">종목</th><th>체결일</th><th>체결가</th><th>수량</th><th>목표가 +20%</th>' +
+        '<th>만기(예상)</th><th>남은 날</th><th class="l">상태</th><th></th></tr></thead><tbody>' +
+        open.map(function(t){
+          var left = daysLeft(t.due);
+          var wh = broken(t);
+          return "<tr>" +
+            '<td class="l"><b>' + esc(t.name) + '</b> <span class="num" style="color:var(--muted);font-size:12px">' + esc(t.code) + "</span></td>" +
+            '<td class="n">' + esc(t.buydate) + "</td>" +
+            '<td class="n">' + won(t.price) + "</td>" +
+            '<td class="n">' + won(t.qty) + "</td>" +
+            '<td class="n">' + won(t.price * TARGET) + "</td>" +
+            '<td class="n">' + esc(t.due) + "</td>" +
+            '<td class="n' + (left != null && left <= 7 ? " neg" : "") + '">' + (left == null ? "—" : left + "일") + "</td>" +
+            '<td class="l">' + (wh.length
+              ? '<span class="tag t-fail">규칙 밖</span> <span style="font-size:11.5px;color:var(--muted)">' + esc(wh.join(", ")) + "</span>"
+              : '<span class="tag t-pass">규칙대로</span>') + "</td>" +
+            '<td><button class="ghost mini" data-close="' + esc(t.id) + '">청산 기록</button></td>' +
+          "</tr>";
+        }).join("") + "</tbody></table></div>";
+    }
+
+    /* 끝난 매매 */
+    if (!done.length) {
+      el("donewrap").innerHTML = '<p class="empty">아직 끝난 매매가 없다.</p>';
+      el("backup").hidden = true;
+    } else {
+      el("donewrap").innerHTML = '<div class="scroll"><table><thead><tr>' +
+        '<th class="l">종목</th><th>체결일</th><th>청산일</th><th>체결가</th><th>청산가</th>' +
+        '<th>수익률</th><th>손익</th><th class="l">사유</th><th class="l">규칙</th></tr></thead><tbody>' +
+        done.slice().reverse().map(function(t){
+          var r = ret(t), p = pnl(t), wh = broken(t);
+          var cls = r >= 0 ? "pos" : "neg";
+          return "<tr>" +
+            '<td class="l"><b>' + esc(t.name) + "</b></td>" +
+            '<td class="n">' + esc(t.buydate) + "</td>" +
+            '<td class="n">' + esc(t.exitdate) + "</td>" +
+            '<td class="n">' + won(t.price) + "</td>" +
+            '<td class="n">' + won(t.exitPrice) + "</td>" +
+            '<td class="n ' + cls + '">' + pct(r) + "</td>" +
+            '<td class="n ' + cls + '">' + (p>=0?"+":"−") + won(Math.abs(p)) + "</td>" +
+            '<td class="l">' + esc(t.reason) + "</td>" +
+            '<td class="l">' + (wh.length ? '<span class="tag t-fail">밖</span>' : '<span class="tag t-pass">대로</span>') + "</td>" +
+          "</tr>";
+        }).join("") + "</tbody></table></div>";
+      el("backup").hidden = false;
+      el("csv").textContent = ["코드,종목,돌파일,MFI일,체결일,체결가,수량,청산일,청산가,수익률%,사유,규칙대로"].concat(
+        state.trades.map(function(t){
+          var r = ret(t);
+          return [t.code,t.name,t.sigdate,t.mfidate,t.buydate,t.price,t.qty,
+            t.exitdate||"",t.exitPrice||"",r==null?"":r.toFixed(2),t.reason||"",
+            broken(t).length?"N":"Y"].join(",");
+        })).join("\n");
+    }
+  }
+
+  /* ---------- 저장 ---------- */
+  var pubBusy = false;
+  function buildDoc(){
+    var css = root.getElementById("css").textContent;
+    var app = root.getElementById("app").textContent;
+    var shell = root.getElementById("shell") ? root.getElementById("shell").innerHTML : null;
+    var json = JSON.stringify({trades: state.trades}).replace(/</g, "\\u003c");
+    return "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\">" +
+      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
+      "<title>" + TITLE + "</title>" +
+      "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">" +
+      "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>" +
+      "<link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=Hahmlet:wght@500;700&family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap\">" +
+      "<style id=\"css\">" + css + "</style></head><body>" +
+      MARKUP +
+      "<scr" + "ipt type=\"application/json\" id=\"state\">" + json + "</scr" + "ipt>" +
+      "<scr" + "ipt id=\"app\">" + app + "</scr" + "ipt>" +
+      "</body></html>";
+  }
+
+  var MARKUP = "";
+  function captureMarkup(){
+    var w = root.querySelector(".wrap");
+    if (!w) return;
+    var clone = w.cloneNode(true);
+    /* 값이 채워진 자리는 비우고 뼈대만 남긴다 — 살아있는 DOM을 그대로 굳히지 않는다 */
+    ["stats","openwrap","donewrap","opencount","donecount","csv"].forEach(function(id){
+      var n = clone.querySelector("#" + id);
+      if (n) n.innerHTML = "";
+    });
+    var b = clone.querySelector("#backup");
+    if (b) b.setAttribute("hidden", "");
+    var f = clone.querySelector("#buyform");
+    if (f) {
+      f.querySelectorAll("input,textarea").forEach(function(i){
+        if (i.type === "checkbox") i.removeAttribute("checked"); else i.removeAttribute("value");
+      });
+    }
+    MARKUP = clone.outerHTML;
+  }
+
+  var artifactNS = null, artifactTried = false;
+  function save(msgEl){
+    if (pubBusy) return;
+    render();
+    if (!artifactNS) {
+      if (artifactTried) {
+        msgEl.className = "msg err";
+        msgEl.textContent = "저장 기능을 쓸 수 없다. 아래 CSV를 복사해 두면 기록은 잃지 않는다.";
+      }
+      return;
+    }
+    pubBusy = true;
+    msgEl.className = "msg";
+    msgEl.textContent = "저장 중…";
+    artifactNS.publish(buildDoc()).then(function(){
+      msgEl.className = "msg ok";
+      msgEl.textContent = "저장했다.";
+    }).catch(function(err){
+      pubBusy = false;
+      msgEl.className = "msg err";
+      msgEl.textContent = (err && err.code === "conflict")
+        ? "다른 화면에서 먼저 저장했다. 새로 열린 내용에 다시 적어라."
+        : "저장이 안 됐다. 아래 CSV를 복사해 두어라.";
+    });
+  }
+
+  /* ---------- 입력 ---------- */
+  var priceEl = el("price"), qtyEl = el("qty");
+  function suggestQty(){
+    var p = parseFloat(String(priceEl.value).replace(/,/g, ""));
+    if (p > 0) {
+      var q = Math.floor(SLOT / p);
+      el("qtyhint").textContent = "33.3만원이면 " + q + "주 (약 " + won(q * p) + "원)";
+      if (!qtyEl.value) qtyEl.placeholder = String(q);
+    } else {
+      el("qtyhint").textContent = "33.3만원 기준 수량이 자동으로 들어간다";
+    }
+  }
+  priceEl.addEventListener("input", suggestQty);
+
+  el("buyform").addEventListener("submit", function(e){
+    e.preventDefault();
+    var msg = el("buymsg");
+    var p = parseFloat(String(priceEl.value).replace(/,/g, ""));
+    if (!(p > 0)) { msg.className = "msg err"; msg.textContent = "체결가를 확인해라."; return; }
+    var q = parseInt(String(qtyEl.value).replace(/,/g, ""), 10);
+    if (!(q > 0)) q = Math.floor(SLOT / p);
+    var sig = el("sigdate").value, mfi = el("mfidate").value;
+    if (mfi > sig) { msg.className = "msg err"; msg.textContent = "MFI 탈출일이 돌파일보다 뒤다. 규칙은 MFI가 먼저다."; return; }
+    var buy = el("buydate").value;
+    state.trades.push({
+      id: "t" + Date.now().toString(36),
+      code: el("code").value.trim(), name: el("name").value.trim(),
+      sigdate: sig, mfidate: mfi, buydate: buy,
+      price: p, qty: q, turnover: el("turnover").value.trim(),
+      due: addDays(buy, HOLD_DAYS),
+      checks: {c1: el("c1").checked, c2: el("c2").checked, c3: el("c3").checked, c4: el("c4").checked},
+      memo: el("memo").value.trim(),
+      exitdate: "", exitPrice: 0, reason: ""
+    });
+    e.target.reset();
+    suggestQty();
+    save(msg);
+  });
+
+  root.addEventListener("click", function(e){
+    var btn = e.target.closest ? e.target.closest("[data-close]") : null;
+    if (!btn) return;
+    var t = state.trades.filter(function(x){ return x.id === btn.getAttribute("data-close"); })[0];
+    if (!t) return;
+    var xp = prompt("[" + t.name + "] 청산가를 원 단위로 적어라.\n체결가 " + won(t.price) +
+      "원 · 목표가 " + won(t.price * TARGET) + "원");
+    if (xp === null) return;
+    var v = parseFloat(String(xp).replace(/,/g, ""));
+    if (!(v > 0)) { alert("숫자를 확인해라."); return; }
+    var d = prompt("청산일 (YYYY-MM-DD)", new Date().toISOString().slice(0,10));
+    if (d === null) return;
+    var r = (v / t.price - 1 - COST) * 100;
+    var why = prompt("청산 사유\n익절 / 만기 / 규칙이탈",
+      r >= 19 ? "익절" : (daysLeft(t.due) != null && daysLeft(t.due) <= 0 ? "만기" : "규칙이탈"));
+    if (why === null) return;
+    t.exitPrice = v; t.exitdate = d; t.reason = why.trim() || "기타";
+    save(el("buymsg"));
+  });
+
+  captureMarkup();
+  render();
+  suggestQty();
+
+  if (window.claude && typeof window.claude.use === "function") {
+    window.claude.use("artifact").then(function(ns){
+      artifactTried = true;
+      artifactNS = ns;
+      if (!ns) {
+        var m = el("buymsg");
+        m.className = "msg";
+        m.textContent = "이 화면에서는 저장이 안 된다 — 기록은 화면에만 남는다.";
+      }
+    }).catch(function(){ artifactTried = true; });
+  } else {
+    artifactTried = true;
+  }
+})();
+</script>
