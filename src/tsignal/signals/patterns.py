@@ -50,7 +50,15 @@ class CupHandleParams:
     cup_max: int = 325             # 컵 최대 길이
     cup_depth_min: float = 0.12    # 컵 깊이 하한
     cup_depth_max: float = 0.50    # 컵 깊이 상한
-    rim_recovery: float = 0.93     # 우측 고점 / 좌측 고점
+    rim_recovery: float = 0.93     # 우측 고점 / 좌측 고점 (하한)
+    rim_overshoot: float = 1.15    # 우측 고점 / 좌측 고점 (상한). 컵은 좌우 테두리가
+                                   # 비슷한 높이여야 한다. 상한이 없으면 좌측 고점을
+                                   # 훨씬 뚫고 올라간 급등도 '컵' 으로 통과한다 —
+                                   # 실측에서 전체 신호의 32.6% 가 비율 1.20 초과였고
+                                   # 최대 10.2배였다.
+    handle_at_rim: float = 0.88    # 핸들 고점 / 우측 고점. 핸들은 컵의 오른쪽 입술
+                                   # 근처에서 만들어진다. 우측 고점 한참 아래에서
+                                   # 생긴 눌림은 핸들이 아니라 붕괴 도중의 반등이다.
     rim_is_peak: float = 0.98      # 좌측 고점이 직전 고점 대비 이 비율 이상 (진짜 봉우리인가)
     rim_lookback: int = 20         # 좌측 고점의 '직전' 을 몇 봉으로 볼지
     rim_position: float = 0.34     # 좌측 고점이 컵 앞쪽 1/3 구간의 이 비율 안에 있어야 한다
@@ -141,7 +149,11 @@ def cup_with_handle(
                 cup_depth = (left_rim - trough) / left_rim
                 if not (params.cup_depth_min <= cup_depth <= params.cup_depth_max):
                     continue
-                if right_rim < left_rim * params.rim_recovery:
+                if not (params.rim_recovery <= right_rim / left_rim
+                        <= params.rim_overshoot):
+                    continue
+                # 핸들은 컵 오른쪽 입술 근처에서 만들어져야 한다
+                if handle_high < right_rim * params.handle_at_rim:
                     continue
 
                 # 좌측 고점이 진짜 봉우리인가. 하락 도중의 한 점을 좌측 고점으로

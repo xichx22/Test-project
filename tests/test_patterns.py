@@ -517,3 +517,30 @@ def test_structural_patterns_are_rare_in_random_walks(name, limit):
         volume = rng.integers(500, 5000, 800).astype(float)
         total += int(PATTERNS[name](_bars(close, volume)).sum())
     assert total / 40 < limit, f"{name} 이 랜덤워크에서 종목당 {total/40:.2f}회 나온다"
+
+
+def test_rejects_runaway_right_rim():
+    """우측 테두리가 좌측을 크게 뚫고 올라가면 컵이 아니다.
+
+    실측에서 이 상한이 없어 롯데쇼핑처럼 '3배 급등 후 반토막' 이 컵으로
+    잡혔다. 좌측 80,900 · 저점 62,700 · 우측 211,000 (2.6배).
+    """
+    # 하락 → 저점 → 좌측 고점을 한참 넘어서는 급등 → 급락 → 5봉 눌림 → 돌파
+    closes = ([100] * 20 + list(np.linspace(100, 70, 40)) + list(np.linspace(70, 260, 40))
+              + list(np.linspace(260, 120, 15)) + [118, 116, 117, 115, 116] + [125])
+    volumes = [1000] * (len(closes) - 1) + [5000]
+    assert not cup_with_handle(_candles(closes, volumes)).any()
+
+
+def test_rejects_handle_far_below_the_right_rim():
+    """핸들은 컵 오른쪽 입술 근처에 생긴다. 한참 아래면 붕괴 중 반등이다."""
+    closes = ([100] * 20 + list(np.linspace(100, 75, 30)) + list(np.linspace(75, 105, 30))
+              + list(np.linspace(105, 70, 12)) + [69, 68, 69, 67, 68] + [72])
+    volumes = [1000] * (len(closes) - 1) + [5000]
+    assert not cup_with_handle(_candles(closes, volumes)).any()
+
+
+def test_still_accepts_a_rim_that_recovers_to_the_same_level():
+    """고친 뒤에도 정상 컵앤핸들은 잡혀야 한다 (상한이 너무 좁으면 안 된다)."""
+    params = CupHandleParams()
+    assert params.rim_recovery < 1.0 < params.rim_overshoot
