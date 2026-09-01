@@ -174,6 +174,7 @@ footer{border-top:1px solid var(--rule); padding-top:20px; margin-top:12px;
   <li><a href="#regime">국면</a></li>
   <li><a href="#bear">하락장</a></li>
   <li><a href="#account">계좌</a></li>
+  <li><a href="#roll">굴림 창</a></li>
   <li><a href="#dead">기각 목록</a></li>
   <li><a href="#do">할 일</a></li>
 </ul></nav>
@@ -191,6 +192,9 @@ footer{border-top:1px solid var(--rule); padding-top:20px; margin-top:12px;
     <div class="row"><span class="chip c-pass">생존</span><div>
       <p class="what">6자산 동일가중 분기 리밸런싱 — 연 +11.22%, 최대낙폭 −10.53%</p>
       <p class="why">아무 달에 시작해 1년을 들고 있으면 10번 중 8번(81.7%)은 원금보다 많았다. 예측이 없어서 통과했다. 한국주식·국고채10년·국고채3년·미국주식·금·달러.</p></div></div>
+    <div class="row"><span class="chip c-warn">조건부</span><div>
+      <p class="what">MFI 과매도 → 20일 안에 컵앤핸들 돌파 · 익절 +20% / 60일 만기</p>
+      <p class="why">191개 굴림 창에서 현금을 81%, 지수가 내린 창에서도 76% 이겼다. 뽑기 폭 0.0%p로 종목 고르는 순서에 흔들리지 않는 유일한 축이다. <strong>다만 중앙값인 해에 540만원 넣어 +37.5만원, 최악의 해엔 −42만원이다.</strong> 1년에 신호가 30번쯤 뜨고 나머지 날은 아무것도 안 한다.</p></div></div>
     <div class="row"><span class="chip c-warn">조건부</span><div>
       <p class="what">과매도 되돌림 매수 + 짧은 익절</p>
       <p class="why">건당으로는 기준선을 이긴다. 계좌로 옮기면 우위가 대부분 사라지고, 하락장에서는 현금(연 2.5%)에 진다. <strong>손실을 줄이는 방법이지 버는 방법이 아니다.</strong></p></div></div>
@@ -548,6 +552,64 @@ footer{border-top:1px solid var(--rule); padding-top:20px; margin-top:12px;
   </div>
 </section>
 
+<!-- ================= 굴림 창 ================= -->
+<section id="roll">
+  <div class="shead"><span class="snum">굴림</span><h2>구간을 사람이 고르지 않는다</h2></div>
+  <div class="prose">
+    <p>지금까지의 모든 검정에는 같은 빈틈이 있었다 — <strong>기간을 내가 골랐다.</strong> 시작일을 6개월만 밀어도 부호가 뒤집히는 발견이 이미 하나 나왔다(MFI ∩ RSI 하락장).</p>
+    <p>그래서 2010-01 ~ 2026-08을 <strong>1년짜리 창으로 자르고 한 달씩 밀어 191개 창</strong>을 만들었다. 창마다 사용자 규칙을 그대로 굴린다 — 100만원 시작, 매월 21일 40만원 입금, 한 자리 33.3만원, 익절 +20%, 60일 만기. 같은 창의 지수 적립·현금과 나란히 놓는다.</p>
+    <p><strong>돌리기 전에 정한 판정 기준</strong> — ① 전체 창 중 현금(연 2.5%)을 이긴 비율 60% 이상, ② 지수가 내린 68개 창에서만 따로 봐도 50% 이상. 그리고 ③ 1·2위 차이가 뽑기 폭보다 작으면 '구분 불가'로 적는다.</p>
+  </div>
+
+  <div class="scroll"><table>
+    <caption>191개 창 · 전 창 집계(신호가 없던 창은 현금 보유로 셈) · 기준선 지수 적립 +4.36% / 현금 +2.45%</caption>
+    <thead><tr><th class="l">매수 규칙</th><th>신호</th><th>IRR 중앙</th><th>현금 이김</th><th>지수 이김</th><th>내린 창</th><th>뽑기 폭</th><th>판정</th></tr></thead>
+    <tbody>
+      <tr><td class="l">⑦ MFI 과매도 → 20일 안에 컵앤핸들</td><td>467</td><td>+11.87%</td><td class="pos">81%</td><td>54%</td><td class="pos">76%</td><td class="pos">0.0%p</td><td class="pos">통과</td></tr>
+      <tr><td class="l">⑥ 컵앤핸들 ∩ MFI (순서 무관, 20일)</td><td>969</td><td>+11.81%</td><td class="pos">78%</td><td>58%</td><td class="pos">72%</td><td class="pos">0.7%p</td><td class="pos">통과</td></tr>
+      <tr><td class="l">③ 컵앤핸들 ∩ 거래량 급등</td><td>2,187</td><td>+14.61%</td><td>70%</td><td>58%</td><td class="neg">49%</td><td>7.3%p</td><td class="neg">탈락</td></tr>
+      <tr><td class="l">① 컵앤핸들 단독</td><td>7,512</td><td>+14.18%</td><td>74%</td><td>59%</td><td>50%</td><td class="neg">12.5%p</td><td class="neg">구분 불가</td></tr>
+      <tr><td class="l">④ 컵앤핸들 ∩ 상승 삼각형</td><td>3,172</td><td>+12.67%</td><td>65%</td><td>52%</td><td class="neg">41%</td><td class="neg">10.0%p</td><td class="neg">탈락</td></tr>
+      <tr><td class="l">⑤ 컵앤핸들 ∩ 20일 신고가</td><td>5,250</td><td>+13.20%</td><td>73%</td><td>58%</td><td>53%</td><td class="neg">12.8%p</td><td class="neg">구분 불가</td></tr>
+      <tr><td class="l">② 컵앤핸들 ∪ MFI</td><td>42,628</td><td>+9.60%</td><td>69%</td><td>62%</td><td class="neg">44%</td><td class="neg">18.4%p</td><td class="neg">탈락</td></tr>
+      <tr class="base"><td class="l">⑨ MFI ∩ 윌리엄스 [대조군]</td><td>12,169</td><td>+6.77%</td><td>62%</td><td class="neg">47%</td><td class="neg">41%</td><td class="neg">13.6%p</td><td class="neg">탈락</td></tr>
+    </tbody>
+  </table></div>
+  <p class="figcap">'내린 창'은 지수가 하락한 68개 창에서만 현금을 이긴 비율. '뽑기 폭'은 같은 창에서 종목 고르는 순서만 바꿔 다시 굴렸을 때 결과가 벌어지는 폭이다.</p>
+
+  <h3>뽑기 폭이 판정을 정한다</h3>
+  <div class="board">
+    <div class="row"><span class="chip c-fail">뒤집힘</span><div>
+      <p class="what">규칙을 안 바꾸고 순서만 바꿨는데 탈락이 통과가 됐다</p>
+      <p class="why">⑤ 컵앤핸들 ∩ 20일 신고가는 한 번은 내린 창 47%(탈락), 다시 굴리니 53%(통과)로 나왔다. 뽑기 폭이 12.8%p이므로 6%p 흔들림은 그 안이다. <strong>①도 50.0%로 기준선에 딱 붙어 있어 같은 자리다 — 둘 다 '통과'로 세면 안 된다.</strong></p></div></div>
+    <div class="row"><span class="chip c-pass">생존</span><div>
+      <p class="what">신호가 적은 규칙만 판정이 흔들리지 않는다</p>
+      <p class="why">⑥·⑦은 신호가 969개·467개뿐이라 자리 다툼이 거의 없고, 뽑기 폭이 0.7%p·0.0%p다. 순서를 어떻게 바꿔도 같은 답이 나온다. <strong>판정을 신뢰할 수 있는 것은 이 둘뿐이다.</strong></p></div></div>
+    <div class="row"><span class="chip c-warn">보정</span><div>
+      <p class="what">'살 게 없던 창'을 빼면 성적이 부풀려진다</p>
+      <p class="why">⑦은 191개 창 중 66개에서 1년간 신호가 20개도 뜨지 않는다. 그 창을 빼고 재면 내린 창 방어가 90%로 나오지만, 현금 보유로 채워 넣으면 <strong>76%</strong>다. 표의 값은 채워 넣은 쪽이다.</p></div></div>
+  </div>
+
+  <h3>돈으로</h3>
+  <div class="scroll"><table>
+    <caption>1년 창 · 넣은 돈 540만원(100만 시작 + 매월 21일 40만 × 11회)</caption>
+    <thead><tr><th class="l">경우</th><th>IRR</th><th>1년 뒤</th><th>손익</th></tr></thead>
+    <tbody>
+      <tr><td class="l">⑦ 중앙값인 해</td><td>+11.87%</td><td>577.5만</td><td class="pos">+37.5만</td></tr>
+      <tr><td class="l">지수 적립 중앙값</td><td>+4.36%</td><td>553.9만</td><td>+13.9만</td></tr>
+      <tr><td class="l">현금 파킹</td><td>+2.45%</td><td>547.8만</td><td>+7.8만</td></tr>
+      <tr><td class="l">⑦ 최악의 해</td><td>−12.90%</td><td>498.0만</td><td class="neg">−42.0만</td></tr>
+      <tr><td class="l">⑥ 최악의 해</td><td>−28.80%</td><td>444.0만</td><td class="neg">−96.0만</td></tr>
+    </tbody>
+  </table></div>
+  <p class="figcap">중앙값이 아니라 <strong>최악의 해</strong>가 ⑥과 ⑦을 가른다. 중앙 수익은 +11.87% / +11.81%로 사실상 같은데, 나쁜 해의 손실은 −42만과 −96만으로 두 배 이상 벌어진다.</p>
+
+  <div class="call bad">
+    <p class="lbl">주의</p>
+    <p>창 191개는 <strong>독립 표본 191개가 아니다.</strong> 1년 창을 한 달씩 밀었으므로 이웃한 창끼리 11개월을 공유한다. 실질 독립 구간은 16개 수준이다. 76%·81% 같은 비율은 정밀한 확률이 아니라 <strong>비교용 눈금</strong>으로만 읽어야 한다.</p>
+  </div>
+</section>
+
 <!-- ================= 기각 목록 ================= -->
 <section id="dead">
   <div class="shead"><span class="snum">기각</span><h2>죽은 것들과, 죽은 자리</h2></div>
@@ -569,6 +631,10 @@ footer{border-top:1px solid var(--rule); padding-top:20px; margin-top:12px;
       <tr><td class="l">컵앤핸들 + 조건 쌓기</td><td class="l">5/5년 우위</td><td class="l">조건 축 분해</td><td class="l neg">단독 조건은 3/6년</td></tr>
       <tr><td class="l">윌리엄스 과매수 청산</td><td class="l">8개 중 1위</td><td class="l">전 표본 회계</td><td class="l neg">발동률 68% · 오른 것만 셌음</td></tr>
       <tr><td class="l">조합 162개 중 1등 고르기</td><td class="l">학습 +18.40%</td><td class="l">학습 / 검증 순위</td><td class="l neg">상관 +0.29</td></tr>
+      <tr><td class="l">MFI ∩ RSI 하락장 우위</td><td class="l">+2.76% (1구간)</td><td class="l">하락장 6구간 확대</td><td class="l neg">1/6 · 시작일 6개월 이동에 부호 반전</td></tr>
+      <tr><td class="l">컵앤핸들 검출기</td><td class="l">6구간 · 191창 통과</td><td class="l">차트를 그려서 눈으로 봄</td><td class="l neg">신호의 32.6%가 오탐 (우측 테두리 최대 10.2배)</td></tr>
+      <tr><td class="l">② 컵앤핸들 ∪ MFI (직전 1위)</td><td class="l">내린 창 59%</td><td class="l">검출기 수정 후 재검정</td><td class="l neg">내린 창 44% · 사실상 MFI 단독이 됨</td></tr>
+      <tr><td class="l">굴림 창 판정 그 자체</td><td class="l">⑤ 내린 창 47% 탈락</td><td class="l">뽑기 순서 고정 후 재실행</td><td class="l neg">53% 통과로 뒤집힘 — 폭 12.8%p 안</td></tr>
     </tbody>
   </table></div>
   <div class="prose">
