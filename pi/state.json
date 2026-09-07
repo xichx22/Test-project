@@ -1,0 +1,36 @@
+{
+ "settings": {
+  "start": "2026-09-01",
+  "seed": 1000000,
+  "monthly": 350000,
+  "depositDay": 21
+ },
+ "asof": "2026-09-02",
+ "signals": [],
+ "trades": [
+  {
+   "id": "t_nice036800",
+   "type": "⑤",
+   "code": "036800",
+   "name": "나이스정보통신",
+   "sigdate": "2026-09-01",
+   "buydate": "2026-09-01",
+   "price": 7900,
+   "qty": 42,
+   "pivot": 7650,
+   "turnover": "11.8",
+   "due": "2026-12-01",
+   "now": 7960.0,
+   "checks": {
+    "c1": true,
+    "c2": true,
+    "c3": true,
+    "c4": true
+   },
+   "memo": "09-01 종가 7,960 으로 돌파선 7,650 돌파, 거래량 2.8배 · 거래대금 11.8억. 20일 신고가 겸함. NXT 시간외 7,900 체결.",
+   "exitdate": "",
+   "exitPrice": 0,
+   "reason": ""
+  }
+ ]
+}

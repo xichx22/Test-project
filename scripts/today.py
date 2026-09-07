@@ -10,6 +10,7 @@ P=CupHandleParams()
 ARGS=[a for a in sys.argv[1:] if not a.startswith("--")]
 DAYS=int(ARGS[0]) if ARGS else 3
 ROOT="data_live/1d" if "--live" in sys.argv else "data_wide/1d"
+JSON="--json" in sys.argv          # 기계가 읽을 형태로 (라즈베리파이 파이프라인용)
 uni=pd.read_csv("data_wide/universe.csv",dtype=str).set_index("code")
 
 def fired(high,low,close,volume,t,avgv):
@@ -77,6 +78,28 @@ for path in sorted(glob.glob(f"{ROOT}/*.csv")):
             MFI선행="예" if mfi_ok else "아니오",MFI일=mday,
             컵봉=b["컵봉"],손잡이=b["손잡이"],깊이=b["깊이"]*100,
             다음날시가=cl[t+1] if False else np.nan))
+if JSON:
+    import json
+    r=pd.DataFrame(rows) if rows else pd.DataFrame(columns=["거래대금억","신고가겸함","MFI선행"])
+    if len(r): r=r[r["거래대금억"]>=3]
+    def pick(df, kind):
+        out=[]
+        for _,x in df.iterrows():
+            out.append(dict(date=str(x["신호일"]), code=x["code"], name=x["종목"],
+                type=kind, pivot=round(float(x["피벗"])), close=round(float(x["종가"])),
+                volMult=round(float(x["거래량배"]),1), turnover=f'{x["거래대금억"]:.1f}',
+                market=x["시장"], cupBars=int(x["컵봉"]), handleBars=int(x["손잡이"]),
+                depth=round(float(x["깊이"]),1), note=""))
+        return out
+    five=pick(r[r["신고가겸함"]=="예"],"⑤") if len(r) else []
+    seven=pick(r[r["MFI선행"]=="예"],"⑦") if len(r) else []
+    codes7={s["code"] for s in seven}
+    payload=dict(asof=str(last_seen.date()), days=DAYS,
+                 signals=seven+[s for s in five if s["code"] not in codes7],
+                 counts=dict(five=len(five), seven=len(seven), all=len(r)))
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    raise SystemExit
+
 print(f"데이터 마지막 거래일: {last_seen.date()}  ·  최근 {DAYS}거래일 검사\n")
 if not rows:
     print("신호 없음."); raise SystemExit

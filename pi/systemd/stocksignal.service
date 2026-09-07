@@ -1,0 +1,13 @@
+[Unit]
+Description=한국주식 매매 신호 조회 (컵앤핸들 + MFI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/Test-project
+ExecStart=/home/pi/Test-project/pi/daily.sh
+# 네이버가 느릴 때를 대비해 넉넉히. 이 시간을 넘기면 죽인다.
+TimeoutStartSec=1800
+Nice=10

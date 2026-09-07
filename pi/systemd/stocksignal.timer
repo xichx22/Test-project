@@ -1,0 +1,14 @@
+[Unit]
+Description=평일 16:00(KST) 매매 신호 조회
+
+[Timer]
+# 장 마감 15:30 + 30분. 파이 시간대를 Asia/Seoul 로 맞춰 둘 것:
+#   sudo timedatectl set-timezone Asia/Seoul
+OnCalendar=Mon..Fri 16:00
+# 파이가 꺼져 있어 놓친 실행은 켜지자마자 한 번 돈다
+Persistent=true
+# 여러 대가 동시에 네이버를 때리지 않게 흩뿌린다
+RandomizedDelaySec=180
+
+[Install]
+WantedBy=timers.target

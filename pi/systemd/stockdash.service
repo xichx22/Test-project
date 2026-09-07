@@ -1,0 +1,16 @@
+[Unit]
+Description=매매 대시보드 (집 안에서만 보이는 웹서버)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Test-project/pi/public
+# 0.0.0.0 이면 공유기 안 어디서나 http://<파이IP>:8800 으로 열린다.
+# 바깥에 열지 말 것 — 인증이 없다.
+ExecStart=/usr/bin/python3 -m http.server 8800 --bind 0.0.0.0
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
