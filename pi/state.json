@@ -5,8 +5,39 @@
   "monthly": 350000,
   "depositDay": 21
  },
- "asof": "2026-09-02",
- "signals": [],
+ "asof": "2026-09-07",
+ "signals": [
+  {
+   "date": "2026-09-03",
+   "code": "007690",
+   "name": "국도화학",
+   "type": "⑤",
+   "pivot": 40500,
+   "close": 40750,
+   "volMult": 1.5,
+   "turnover": "8.2",
+   "market": "KOSPI",
+   "cupBars": 85,
+   "handleBars": 7,
+   "depth": 34.6,
+   "note": ""
+  },
+  {
+   "date": "2026-09-03",
+   "code": "088350",
+   "name": "한화생명",
+   "type": "⑤",
+   "pivot": 6050,
+   "close": 6110,
+   "volMult": 5.4,
+   "turnover": "331.1",
+   "market": "KOSPI",
+   "cupBars": 75,
+   "handleBars": 5,
+   "depth": 36.2,
+   "note": ""
+  }
+ ],
  "trades": [
   {
    "id": "t_nice036800",
@@ -20,7 +51,7 @@
    "pivot": 7650,
    "turnover": "11.8",
    "due": "2026-12-01",
-   "now": 7960.0,
+   "now": 7360.0,
    "checks": {
     "c1": true,
     "c2": true,

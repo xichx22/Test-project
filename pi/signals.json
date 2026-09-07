@@ -1,0 +1,41 @@
+{
+  "asof": "2026-09-07",
+  "days": 3,
+  "signals": [
+    {
+      "date": "2026-09-03",
+      "code": "007690",
+      "name": "국도화학",
+      "type": "⑤",
+      "pivot": 40500,
+      "close": 40750,
+      "volMult": 1.5,
+      "turnover": "8.2",
+      "market": "KOSPI",
+      "cupBars": 85,
+      "handleBars": 7,
+      "depth": 34.6,
+      "note": ""
+    },
+    {
+      "date": "2026-09-03",
+      "code": "088350",
+      "name": "한화생명",
+      "type": "⑤",
+      "pivot": 6050,
+      "close": 6110,
+      "volMult": 5.4,
+      "turnover": "331.1",
+      "market": "KOSPI",
+      "cupBars": 75,
+      "handleBars": 5,
+      "depth": 36.2,
+      "note": ""
+    }
+  ],
+  "counts": {
+    "five": 2,
+    "seven": 0,
+    "all": 4
+  }
+}
